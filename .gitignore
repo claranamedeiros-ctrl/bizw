@@ -29,6 +29,8 @@ Thumbs.db
 sample-data/
 *.md
 !README.md
+!TECHNICAL_PROPOSAL_V2.md
+!LOGO_COLOR_EXTRACTION_PROPOSAL.md
 
 # IDE
 .vscode/
