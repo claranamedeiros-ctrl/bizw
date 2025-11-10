@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chromium } from 'playwright';
-import Vibrant from 'node-vibrant';
+import * as Vibrant from 'node-vibrant';
 
 export async function POST(request: NextRequest) {
   try {
@@ -95,8 +95,7 @@ export async function POST(request: NextRequest) {
       await browser.close();
 
       // Extract colors using Vibrant
-      const vibrant = new Vibrant(screenshotBuffer);
-      const palette = await vibrant.getPalette();
+      const palette = await Vibrant.from(screenshotBuffer).getPalette();
 
       // Get color swatches sorted by population (dominance)
       const swatches = Object.values(palette)
