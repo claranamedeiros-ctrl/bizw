@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chromium } from 'playwright';
-const Vibrant = require('node-vibrant');
+import { Vibrant, Swatch } from 'node-vibrant/node';
 
 export async function POST(request: NextRequest) {
   try {
@@ -100,8 +100,8 @@ export async function POST(request: NextRequest) {
 
       // Get color swatches sorted by population (dominance)
       const swatches = Object.values(palette)
-        .filter((swatch) => swatch !== null && swatch !== undefined)
-        .sort((a, b) => (b?.population || 0) - (a?.population || 0));
+        .filter((swatch): swatch is Swatch => swatch !== null && swatch !== undefined)
+        .sort((a, b) => (b.population || 0) - (a.population || 0));
 
       // Extract primary and secondary colors
       const primary = swatches[0]?.hex || '#000000';
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       // Get full palette (top 6 colors)
       const colorPalette = swatches
         .slice(0, 6)
-        .map((swatch) => swatch?.hex || '#000000');
+        .map((swatch) => swatch.hex);
 
       return NextResponse.json({
         logo: logoUrl,
