@@ -1,0 +1,25 @@
+Account,Jan1-Mar31 2025,2024,2023
+Company Name,ABC Corporation,ABC Corporation,ABC Corporation
+Currency,USD,USD,USD
+
+PROFIT & LOSS
+Total Sales Revenue,"385,500","1,543,565","1,245,890"
+Cost of Goods Sold,"192,750","774,918","623,450"
+Operating Expenses,"96,875","387,250","312,450"
+Income Taxes,"19,375","77,450","62,500"
+
+ASSETS
+Cash,"50,000","120,000","95,000"
+Accounts Receivable,"75,000","180,000","145,000"
+Inventory,"45,000","110,000","88,000"
+Fixed Assets,"200,000","450,000","380,000"
+Accumulated Depreciation,"50,000","120,000","95,000"
+
+LIABILITIES
+Accounts Payable,"35,000","85,000","68,000"
+Short-term Debt,"25,000","60,000","48,000"
+Long-term Debt,"100,000","240,000","192,000"
+
+EQUITY
+Owner's Equity,"100,000","240,000","192,000"
+Retained Earnings,"60,000","145,000","115,000"
