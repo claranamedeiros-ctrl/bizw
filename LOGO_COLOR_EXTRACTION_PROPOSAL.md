@@ -92,11 +92,55 @@ This document outlines the **REAL** technical architecture, costs, and implement
 
 ## Part 2: Logo Detection - Technical Deep Dive
 
+```
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  🚀 CORE TECHNOLOGY: PLAYWRIGHT BROWSER AUTOMATION (v1.40+)    ┃
+┃                                                                 ┃
+┃  WE USE PLAYWRIGHT FOR EVERYTHING:                              ┃
+┃  ✅ Launch actual Chromium browser (headless)                   ┃
+┃  ✅ Navigate to website and render JavaScript                   ┃
+┃  ✅ Query DOM for logo using CSS selectors                      ┃
+┃  ✅ Capture screenshot for color extraction                     ┃
+┃  ✅ NO external logo APIs (except as optional fallback)         ┃
+┃                                                                 ┃
+┃  "Open Graph", "DOM queries", "CSS selectors" mentioned         ┃
+┃  below are ALL executed via Playwright page.$(eval) methods    ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+```
+
+### Core Technology: Playwright Browser Automation
+
+**🚀 PRIMARY TECHNOLOGY: PLAYWRIGHT v1.40+**
+
+Everything described below happens **INSIDE a Playwright browser session**. We are NOT using external APIs or services for logo detection - we launch an actual Chromium browser, navigate to the website, and programmatically extract the logo using DOM queries.
+
+**Why Playwright:**
+- Renders JavaScript-heavy sites (React, Vue, Angular)
+- Executes client-side JavaScript before extraction
+- Handles SPAs, lazy loading, dynamic content
+- Takes screenshots for color extraction
+- 100% control over extraction logic
+
+**The Process:**
+```
+1. Launch Chromium browser (headless) via Playwright
+2. Navigate to target website URL
+3. Wait for page to fully load (networkidle)
+4. Execute DOM queries to find logo (see strategies below)
+5. Capture viewport screenshot (PNG buffer)
+6. Close browser
+7. Process screenshot for colors (node-vibrant)
+```
+
+**All logo detection strategies below use Playwright's DOM querying capabilities.**
+
+---
+
 ### Strategy 1: DOM-Based Logo Detection (Current Implementation)
 
 **How It Works:**
 
-The service uses a waterfall approach to detect logos by querying the DOM:
+The service uses a waterfall approach to detect logos by querying the DOM **inside the Playwright browser**:
 
 1. **Open Graph Image** (`meta[property="og:image"]`)
    - Success rate: ~60% for modern websites
@@ -127,13 +171,16 @@ The service uses a waterfall approach to detect logos by querying the DOM:
    - Confidence: Medium
    - Limitation: Assumes logo is first image in header
 
-**Code Implementation (Actual):**
+**Code Implementation (Actual - runs inside Playwright browser):**
 
 ```typescript
-// 1. Try og:image
+// CONTEXT: We're inside a Playwright browser session
+// 'page' is the Playwright Page object after navigating to the website
+
+// STEP 1: Try Open Graph meta tag (via Playwright DOM query)
 const ogImage = await page.$eval(
-  'meta[property="og:image"]',
-  (el) => el.getAttribute('content')
+  'meta[property="og:image"]',  // CSS selector
+  (el) => el.getAttribute('content')  // Execute in browser context
 ).catch(() => null);
 
 // 2. Try logo selectors
