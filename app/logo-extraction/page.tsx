@@ -1,0 +1,200 @@
+'use client';
+
+import { useState } from 'react';
+
+interface ExtractionResult {
+  logo: string | null;
+  colors: {
+    primary: string;
+    secondary: string;
+    palette: string[];
+  };
+  error?: string;
+}
+
+export default function LogoExtraction() {
+  const [url, setUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<ExtractionResult | null>(null);
+
+  const handleExtract = async () => {
+    if (!url) return;
+
+    setLoading(true);
+    setResult(null);
+
+    try {
+      const response = await fetch('/api/extract-logo-colors', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setResult({ logo: null, colors: { primary: '', secondary: '', palette: [] }, error: data.error });
+      } else {
+        setResult(data);
+      }
+    } catch (error) {
+      setResult({
+        logo: null,
+        colors: { primary: '', secondary: '', palette: [] },
+        error: 'Failed to extract logo and colors'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-100 p-8">
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-white rounded-lg shadow-xl p-8">
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">
+            Logo + Color Extraction
+          </h1>
+          <p className="text-gray-600 mb-6">
+            Extract logo and brand colors (primary/secondary) from any website
+          </p>
+
+          {/* URL Input */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Website URL
+            </label>
+            <div className="flex gap-4">
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://example.com"
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              />
+              <button
+                onClick={handleExtract}
+                disabled={loading || !url}
+                className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? 'Extracting...' : 'Extract'}
+              </button>
+            </div>
+          </div>
+
+          {/* Loading State */}
+          {loading && (
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Analyzing website and extracting brand assets...</p>
+            </div>
+          )}
+
+          {/* Error State */}
+          {result?.error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+              <p className="text-red-800">{result.error}</p>
+            </div>
+          )}
+
+          {/* Results */}
+          {result && !result.error && (
+            <div className="space-y-6">
+              {/* Logo */}
+              {result.logo && (
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h2 className="text-xl font-semibold text-gray-800 mb-4">Logo</h2>
+                  <div className="flex items-center justify-center bg-white p-8 rounded-lg border-2 border-gray-200">
+                    <img
+                      src={result.logo}
+                      alt="Extracted logo"
+                      className="max-h-32 object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-sm text-gray-600 mb-2">Logo URL:</p>
+                    <a
+                      href={result.logo}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-purple-600 hover:text-purple-800 text-sm break-all"
+                    >
+                      {result.logo}
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {/* Brand Colors */}
+              <div className="bg-gray-50 rounded-lg p-6">
+                <h2 className="text-xl font-semibold text-gray-800 mb-4">Brand Colors</h2>
+
+                {/* Primary and Secondary */}
+                <div className="grid grid-cols-2 gap-4 mb-6">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-2">Primary Color</p>
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-20 h-20 rounded-lg border-2 border-gray-300 shadow-md"
+                        style={{ backgroundColor: result.colors.primary }}
+                      ></div>
+                      <div>
+                        <p className="font-mono text-lg font-semibold">{result.colors.primary}</p>
+                        <p className="text-sm text-gray-600">Most dominant</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-2">Secondary Color</p>
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-20 h-20 rounded-lg border-2 border-gray-300 shadow-md"
+                        style={{ backgroundColor: result.colors.secondary }}
+                      ></div>
+                      <div>
+                        <p className="font-mono text-lg font-semibold">{result.colors.secondary}</p>
+                        <p className="text-sm text-gray-600">Second most dominant</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Color Palette */}
+                {result.colors.palette && result.colors.palette.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-700 mb-3">Full Color Palette</p>
+                    <div className="flex flex-wrap gap-3">
+                      {result.colors.palette.map((color, idx) => (
+                        <div key={idx} className="text-center">
+                          <div
+                            className="w-16 h-16 rounded-lg border-2 border-gray-300 shadow-sm mb-2"
+                            style={{ backgroundColor: color }}
+                          ></div>
+                          <p className="font-mono text-xs text-gray-600">{color}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Copy JSON */}
+              <div className="bg-gray-50 rounded-lg p-6">
+                <h2 className="text-xl font-semibold text-gray-800 mb-4">JSON Output</h2>
+                <pre className="bg-gray-900 text-green-400 p-4 rounded-lg overflow-x-auto text-sm">
+{JSON.stringify(result, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
