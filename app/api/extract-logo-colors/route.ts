@@ -262,12 +262,19 @@ async function extractLogo(
       };
     }
 
-    // Try to screenshot the actual element
+    // Try to screenshot the actual element with a 3-second timeout
     try {
       const handle = await page.$(`[data-logo-candidate-id="${logoData.candidateId}"]`);
       if (handle) {
         console.log(`[LOGO] Screenshotting logo element (${Math.round(remainingTime / 1000)}s remaining)...`);
-        const buffer = await handle.screenshot({ type: 'png' });
+
+        // Race screenshot against 3-second timeout
+        const screenshotPromise = handle.screenshot({ type: 'png' });
+        const timeoutPromise = new Promise<Buffer>((_, reject) => {
+          setTimeout(() => reject(new Error('Screenshot timeout after 3s')), 3000);
+        });
+
+        const buffer = await Promise.race([screenshotPromise, timeoutPromise]);
         const logoScreenshot = `data:image/png;base64,${buffer.toString('base64')}`;
         console.log('[LOGO] Element screenshot successful');
         return {
