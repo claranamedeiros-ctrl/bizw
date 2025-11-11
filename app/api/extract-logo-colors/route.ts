@@ -75,52 +75,39 @@ export async function POST(request: NextRequest) {
         (el) => el.getAttribute('content')
       ).catch(() => null);
 
-      // 2. Find ALL potential logos and return the URL that looks best
+      // 2. Look for the company logo - SIMPLE approach, check in order of priority
       logoUrl = await page.evaluate(() => {
-        const candidates: Array<{src: string, score: number, width: number, height: number}> = [];
+        // Priority 1: Image with "logo" in the FILENAME inside header/nav
+        const headerImages = document.querySelectorAll('header img, nav img, [role="banner"] img');
+        for (const img of Array.from(headerImages)) {
+          if (img instanceof HTMLImageElement && img.src) {
+            const srcLower = img.src.toLowerCase();
+            // Check if filename (not full URL) contains "logo"
+            const filename = srcLower.split('/').pop() || '';
+            if (filename.includes('logo')) {
+              return img.src;
+            }
+          }
+        }
 
-        // Get all images with "logo" in alt, class, or src
-        const allImages = Array.from(document.querySelectorAll('img'));
-
-        allImages.forEach(img => {
+        // Priority 2: First image in header with alt="logo" or class="logo"
+        for (const img of Array.from(headerImages)) {
           if (img instanceof HTMLImageElement && img.src) {
             const alt = (img.alt || '').toLowerCase();
             const className = (img.className || '').toLowerCase();
-            const src = img.src.toLowerCase();
-
-            // Check if this looks like a logo
-            const isLogo = alt.includes('logo') || className.includes('logo') || src.includes('logo');
-
-            if (isLogo) {
-              const width = img.naturalWidth;
-              const height = img.naturalHeight;
-
-              // Skip if no dimensions loaded yet
-              if (width === 0 || height === 0) return;
-
-              // Calculate score - prefer larger logos with reasonable aspect ratios
-              let score = width * height; // Base score on area
-
-              // Bonus for reasonable aspect ratios (logos are usually horizontal)
-              const aspectRatio = width / height;
-              if (aspectRatio >= 2 && aspectRatio <= 15) {
-                score *= 2; // Double score for good aspect ratio
-              }
-
-              // Penalty for very small logos
-              if (width < 100 || height < 30) {
-                score *= 0.5;
-              }
-
-              candidates.push({ src: img.src, score, width, height });
+            if (alt.includes('logo') || className.includes('logo')) {
+              return img.src;
             }
           }
-        });
+        }
 
-        // Sort by score (highest first) and return best match
-        candidates.sort((a, b) => b.score - a.score);
+        // Priority 3: First image in header (fallback)
+        const firstHeaderImg = document.querySelector('header img, nav img');
+        if (firstHeaderImg instanceof HTMLImageElement && firstHeaderImg.src) {
+          return firstHeaderImg.src;
+        }
 
-        return candidates.length > 0 ? candidates[0].src : null;
+        return null;
       }).catch(() => null);
 
       // Fallback to og:image if no logo found
