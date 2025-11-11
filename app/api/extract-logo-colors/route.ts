@@ -25,6 +25,11 @@ interface BrandColors {
   palette: string[];
 }
 
+interface TextBlocks {
+  about: string | null;
+  disclaimer: string | null;
+}
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -526,6 +531,211 @@ async function extractColorsFromScreenshot(page: Page): Promise<BrandColors> {
 }
 
 // ============================================================================
+// TEXT EXTRACTION - ABOUT & DISCLAIMER
+// ============================================================================
+
+/**
+ * Extract "About" and "Disclaimer" text from the page
+ * Best-effort heuristics for Brand Center defaults
+ */
+async function extractTextBlocks(page: Page): Promise<TextBlocks> {
+  console.log('[TEXT] Extracting about and disclaimer text...');
+
+  try {
+    const textBlocks = await page.evaluate(() => {
+      // Helper: normalize whitespace
+      const normalize = (text: string): string => {
+        return text.replace(/\s+/g, ' ').trim();
+      };
+
+      // Helper: check if text contains keywords (case-insensitive)
+      const containsKeywords = (text: string, keywords: string[]): boolean => {
+        const lower = text.toLowerCase();
+        return keywords.some(kw => lower.includes(kw.toLowerCase()));
+      };
+
+      // ========================================================================
+      // ABOUT TEXT EXTRACTION
+      // ========================================================================
+
+      interface AboutCandidate {
+        text: string;
+        score: number;
+      }
+
+      const aboutCandidates: AboutCandidate[] = [];
+
+      // Strategy 1: Look for elements with "about" in id/class
+      const aboutSelectors = [
+        '[id*="about" i]',
+        '[class*="about" i]',
+        '[id*="our-firm" i]',
+        '[class*="our-firm" i]',
+        '[id*="our-company" i]',
+        '[class*="our-company" i]',
+        '[id*="who-we-are" i]',
+        '[class*="who-we-are" i]'
+      ];
+
+      aboutSelectors.forEach(selector => {
+        try {
+          const elements = document.querySelectorAll(selector);
+          Array.from(elements).slice(0, 10).forEach(el => {
+            const text = normalize(el.textContent || '');
+            if (text.length >= 80 && text.length <= 2000) {
+              // Score based on keywords
+              let score = text.length / 10; // Base score from length
+
+              if (containsKeywords(text, ['clients', 'firm', 'company', 'advisory', 'valuation', 'financial', 'services', 'experience'])) {
+                score += 50;
+              }
+
+              aboutCandidates.push({ text, score });
+            }
+          });
+        } catch (e) {
+          // Skip if selector fails
+        }
+      });
+
+      // Strategy 2: Look for headings with "about" keywords followed by paragraphs
+      const headings = document.querySelectorAll('h1, h2, h3');
+      Array.from(headings).slice(0, 20).forEach(heading => {
+        const headingText = normalize(heading.textContent || '');
+
+        if (containsKeywords(headingText, ['About', 'About Us', 'Our Firm', 'Who We Are', 'Our Company', 'Our Story'])) {
+          // Find the next sibling section/div/article or collect following paragraphs
+          let nextEl = heading.nextElementSibling;
+          let attempts = 0;
+
+          while (nextEl && attempts < 5) {
+            if (nextEl.tagName === 'SECTION' || nextEl.tagName === 'DIV' || nextEl.tagName === 'ARTICLE') {
+              const text = normalize(nextEl.textContent || '');
+              if (text.length >= 80 && text.length <= 2000) {
+                let score = text.length / 10 + 100; // Bonus for following heading
+
+                if (containsKeywords(text, ['clients', 'firm', 'company', 'advisory', 'valuation', 'financial', 'services', 'experience'])) {
+                  score += 50;
+                }
+
+                aboutCandidates.push({ text, score });
+              }
+              break;
+            }
+            nextEl = nextEl.nextElementSibling;
+            attempts++;
+          }
+        }
+      });
+
+      // Pick best about candidate
+      aboutCandidates.sort((a, b) => b.score - a.score);
+      const aboutText = aboutCandidates.length > 0
+        ? aboutCandidates[0].text.substring(0, 1000) // Truncate to 1000 chars
+        : null;
+
+      // ========================================================================
+      // DISCLAIMER TEXT EXTRACTION
+      // ========================================================================
+
+      interface DisclaimerCandidate {
+        text: string;
+        score: number;
+      }
+
+      const disclaimerCandidates: DisclaimerCandidate[] = [];
+
+      // Disclaimer keywords
+      const disclaimerKeywords = [
+        'disclaimer',
+        'not investment advice',
+        'does not constitute',
+        'no guarantee',
+        'for informational purposes only',
+        'no representation',
+        'securities offered through'
+      ];
+
+      // Look in footer, small, and p tags
+      const disclaimerElements = [
+        ...Array.from(document.querySelectorAll('footer')),
+        ...Array.from(document.querySelectorAll('footer *')), // All elements inside footer
+        ...Array.from(document.querySelectorAll('small')),
+        ...Array.from(document.querySelectorAll('p'))
+      ];
+
+      disclaimerElements.slice(0, 100).forEach(el => {
+        const text = normalize(el.textContent || '');
+
+        // Must contain at least one disclaimer keyword
+        if (!containsKeywords(text, disclaimerKeywords)) {
+          return;
+        }
+
+        // Length filter
+        if (text.length < 60 || text.length > 3000) {
+          return;
+        }
+
+        let score = 0;
+
+        // Large bonus for literal "disclaimer"
+        if (text.toLowerCase().includes('disclaimer')) {
+          score += 100;
+        }
+
+        // Bonus if inside footer
+        let parent = el.parentElement;
+        let depth = 0;
+        while (parent && depth < 5) {
+          if (parent.tagName === 'FOOTER') {
+            score += 30;
+            break;
+          }
+          parent = parent.parentElement;
+          depth++;
+        }
+
+        // Length bonus (prefer mid-range)
+        if (text.length >= 200 && text.length <= 1500) {
+          score += 20;
+        }
+
+        // Count disclaimer keywords
+        const keywordCount = disclaimerKeywords.filter(kw =>
+          text.toLowerCase().includes(kw.toLowerCase())
+        ).length;
+        score += keywordCount * 10;
+
+        disclaimerCandidates.push({ text, score });
+      });
+
+      // Pick best disclaimer candidate
+      disclaimerCandidates.sort((a, b) => b.score - a.score);
+      const disclaimerText = disclaimerCandidates.length > 0
+        ? disclaimerCandidates[0].text.substring(0, 1000) // Truncate to 1000 chars
+        : null;
+
+      return { aboutText, disclaimerText };
+    });
+
+    console.log(`[TEXT] About length: ${textBlocks.aboutText?.length || 0} chars`);
+    console.log(`[TEXT] Disclaimer length: ${textBlocks.disclaimerText?.length || 0} chars`);
+
+    return {
+      about: textBlocks.aboutText,
+      disclaimer: textBlocks.disclaimerText
+    };
+  } catch (error) {
+    console.error('[TEXT] Extraction failed:', error);
+    return {
+      about: null,
+      disclaimer: null
+    };
+  }
+}
+
+// ============================================================================
 // MAIN API HANDLER
 // ============================================================================
 
@@ -623,12 +833,20 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
       };
     }
 
+    // Extract text blocks (about & disclaimer)
+    const textBlocks = await extractTextBlocks(page);
+
     await browser.close();
 
     const totalTime = Date.now() - startTime;
     console.log(`[SUCCESS] Extraction complete in ${totalTime}ms`);
 
-    return NextResponse.json({ logo, colors });
+    return NextResponse.json({
+      logo,
+      colors,
+      about: textBlocks.about,
+      disclaimer: textBlocks.disclaimer
+    });
   } catch (error) {
     if (browser) {
       await browser.close().catch(() => {});
