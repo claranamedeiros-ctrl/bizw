@@ -219,12 +219,8 @@ export async function POST(request: NextRequest) {
 
         await browser.close();
 
-        // Proxy the logo through our API to avoid CORS and broken links
-        const proxiedLogoUrl = logoUrl ? `/api/proxy-image?url=${encodeURIComponent(logoUrl)}` : null;
-
         return NextResponse.json({
-          logo: proxiedLogoUrl,
-          logoOriginal: logoUrl, // Keep original for reference
+          logo: logoUrl,
           colors: {
             primary,
             secondary,
@@ -319,12 +315,8 @@ export async function POST(request: NextRequest) {
         .slice(0, 6)
         .map((swatch) => swatch.hex);
 
-      // Proxy the logo through our API to avoid CORS and broken links
-      const proxiedLogoUrl = logoUrl ? `/api/proxy-image?url=${encodeURIComponent(logoUrl)}` : null;
-
       return NextResponse.json({
-        logo: proxiedLogoUrl,
-        logoOriginal: logoUrl, // Keep original for reference
+        logo: logoUrl,
         colors: {
           primary,
           secondary,

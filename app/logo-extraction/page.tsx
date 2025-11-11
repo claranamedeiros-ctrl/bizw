@@ -16,14 +16,22 @@ export default function LogoExtraction() {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ExtractionResult | null>(null);
+  const [progress, setProgress] = useState('');
 
   const handleExtract = async () => {
     if (!url) return;
 
     setLoading(true);
     setResult(null);
+    setProgress('Launching browser...');
 
     try {
+      // Simulate progress messages
+      setTimeout(() => setProgress('Navigating to website...'), 1000);
+      setTimeout(() => setProgress('Extracting logo...'), 3000);
+      setTimeout(() => setProgress('Analyzing brand colors from CSS...'), 8000);
+      setTimeout(() => setProgress('Filtering and sorting colors...'), 10000);
+
       const response = await fetch('/api/extract-logo-colors', {
         method: 'POST',
         headers: {
@@ -37,6 +45,7 @@ export default function LogoExtraction() {
       if (!response.ok) {
         setResult({ logo: null, colors: { primary: '', secondary: '', palette: [] }, error: data.error });
       } else {
+        setProgress('Complete!');
         setResult(data);
       }
     } catch (error) {
@@ -47,6 +56,7 @@ export default function LogoExtraction() {
       });
     } finally {
       setLoading(false);
+      setTimeout(() => setProgress(''), 1000);
     }
   };
 
@@ -88,7 +98,8 @@ export default function LogoExtraction() {
           {loading && (
             <div className="text-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">Analyzing website and extracting brand assets...</p>
+              <p className="text-gray-800 font-semibold text-lg mb-2">{progress}</p>
+              <p className="text-gray-500 text-sm">This may take 10-15 seconds...</p>
             </div>
           )}
 
@@ -106,26 +117,13 @@ export default function LogoExtraction() {
               {result.logo && (
                 <div className="bg-gray-50 rounded-lg p-6">
                   <h2 className="text-xl font-semibold text-gray-800 mb-4">Logo</h2>
-                  <div className="flex items-center justify-center bg-white p-8 rounded-lg border-2 border-gray-200">
+                  <div className="flex items-center justify-center bg-white p-8 rounded-lg border-2 border-gray-200 min-h-[300px]">
                     <img
                       src={result.logo}
                       alt="Extracted logo"
-                      className="max-h-32 object-contain"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
+                      className="max-w-full max-h-[400px] w-auto h-auto object-contain"
+                      crossOrigin="anonymous"
                     />
-                  </div>
-                  <div className="mt-4">
-                    <p className="text-sm text-gray-600 mb-2">Logo URL:</p>
-                    <a
-                      href={result.logo}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-purple-600 hover:text-purple-800 text-sm break-all"
-                    >
-                      {result.logo}
-                    </a>
                   </div>
                 </div>
               )}
