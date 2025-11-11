@@ -25,6 +25,9 @@ export async function POST(request: NextRequest) {
 
     let browser;
     try {
+      console.log('[LOGO] Launching browser...');
+      const startTime = Date.now();
+
       // Launch browser with args for better compatibility in Docker/Render
       browser = await chromium.launch({
         headless: true,
@@ -32,9 +35,12 @@ export async function POST(request: NextRequest) {
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
-          '--disable-gpu'
+          '--disable-gpu',
+          '--single-process', // Use single process to save memory
+          '--no-zygote' // Don't use zygote process
         ]
       });
+      console.log(`[LOGO] Browser launched in ${Date.now() - startTime}ms`);
 
       const context = await browser.newContext({
         viewport: { width: 1920, height: 1080 },
@@ -42,13 +48,18 @@ export async function POST(request: NextRequest) {
       });
 
       const page = await context.newPage();
+      console.log('[LOGO] New page created');
 
       // Navigate to the page with more lenient settings
-      // Changed from 'networkidle' to 'domcontentloaded' - faster and more reliable
+      console.log(`[LOGO] Navigating to ${url}...`);
+      const navStart = Date.now();
+
       await page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: 60000, // Increased to 60 seconds
       });
+
+      console.log(`[LOGO] Navigation completed in ${Date.now() - navStart}ms`);
 
       // Extract logo URL
       let logoUrl: string | null = null;
