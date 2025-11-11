@@ -75,49 +75,41 @@ export async function POST(request: NextRequest) {
         (el) => el.getAttribute('content')
       ).catch(() => null);
 
-      // 2. Look for logo in common selectors - find the LARGEST logo
-      const logoSelectors = [
-        'img[alt*="logo" i]',
-        'img[class*="logo" i]',
-        'img[id*="logo" i]',
-        'a[class*="logo" i] img',
-        'header img',
-        '.header img',
-        '.navbar img',
-        'nav img',
-      ];
+      // 2. Look for the ACTUAL logo - prioritize by specificity, then filter by size
+      logoUrl = await page.evaluate(() => {
+        // Priority 1: Images specifically marked as logo
+        const logoByAlt = document.querySelector('img[alt*="logo" i]:not([alt*="menu"]):not([alt*="icon"])');
+        if (logoByAlt instanceof HTMLImageElement && logoByAlt.naturalWidth > 50) {
+          return logoByAlt.src;
+        }
 
-      // Find ALL potential logos and pick the largest one
-      const potentialLogos = await page.evaluate((selectors) => {
-        const logos: Array<{src: string, width: number, height: number, area: number}> = [];
+        const logoByClass = document.querySelector('img[class*="logo" i]:not([class*="menu"]):not([class*="icon"])');
+        if (logoByClass instanceof HTMLImageElement && logoByClass.naturalWidth > 50) {
+          return logoByClass.src;
+        }
 
-        selectors.forEach(selector => {
-          const elements = document.querySelectorAll(selector);
-          elements.forEach(el => {
-            if (el instanceof HTMLImageElement && el.src) {
-              const area = el.naturalWidth * el.naturalHeight;
-              // Only consider logos bigger than 30x30 pixels
-              if (el.naturalWidth > 30 && el.naturalHeight > 30) {
-                logos.push({
-                  src: el.src,
-                  width: el.naturalWidth,
-                  height: el.naturalHeight,
-                  area: area
-                });
+        // Priority 2: First meaningful image in header/nav that's NOT too small
+        const headerImages = Array.from(document.querySelectorAll('header img, nav img, .header img, .navbar img'));
+
+        for (const img of headerImages) {
+          if (img instanceof HTMLImageElement && img.src) {
+            const width = img.naturalWidth;
+            const height = img.naturalHeight;
+
+            // Exclude tiny images, icons, and decorative elements
+            // Logo should be at least 80px wide and reasonable aspect ratio
+            if (width >= 80 && width <= 600 && height >= 20 && height <= 300) {
+              // Prefer logos with reasonable aspect ratios (not too tall/thin)
+              const aspectRatio = width / height;
+              if (aspectRatio >= 1.5 && aspectRatio <= 15) {
+                return img.src;
               }
             }
-          });
-        });
+          }
+        }
 
-        // Sort by area (largest first)
-        logos.sort((a, b) => b.area - a.area);
-
-        return logos.length > 0 ? logos[0].src : null;
-      }, logoSelectors).catch(() => null);
-
-      if (potentialLogos) {
-        logoUrl = potentialLogos;
-      }
+        return null;
+      }).catch(() => null);
 
       // Fallback to og:image if no logo found
       if (!logoUrl && ogImage) {
@@ -135,61 +127,56 @@ export async function POST(request: NextRequest) {
       const cssColorStart = Date.now();
 
       const cssColors = await page.evaluate(() => {
-        const colors = new Set<string>();
+        const colorMap = new Map<string, number>(); // Track color frequency
+
+        const addColor = (color: string) => {
+          if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
+            // Ignore gradients (they're usually decorative, not brand colors)
+            if (color.includes('gradient')) return;
+
+            const count = colorMap.get(color) || 0;
+            colorMap.set(color, count + 1);
+          }
+        };
 
         // Strategy 1: Get colors from header/nav elements
         const headerElements = document.querySelectorAll('header, nav, .header, .navbar, [role="banner"], .site-header, #header');
 
         headerElements.forEach(el => {
           const computed = window.getComputedStyle(el);
+          addColor(computed.backgroundColor);
+          addColor(computed.color);
 
-          if (computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
-            colors.add(computed.backgroundColor);
-          }
-          if (computed.color) {
-            colors.add(computed.color);
-          }
-
-          // Check ALL child elements in header (not just first 20)
+          // Check child elements
           const children = el.querySelectorAll('*');
           Array.from(children).forEach(child => {
             const childComputed = window.getComputedStyle(child);
-            if (childComputed.backgroundColor && childComputed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
-              colors.add(childComputed.backgroundColor);
-            }
-            if (childComputed.color) {
-              colors.add(childComputed.color);
-            }
-            // Also get border colors
-            if (childComputed.borderColor && childComputed.borderColor !== 'rgba(0, 0, 0, 0)') {
-              colors.add(childComputed.borderColor);
-            }
+            addColor(childComputed.backgroundColor);
+            addColor(childComputed.color);
+            addColor(childComputed.borderColor);
           });
         });
 
-        // Strategy 2: Get CSS variables (modern sites often use these for brand colors)
+        // Strategy 2: Get CSS variables
         const rootStyles = window.getComputedStyle(document.documentElement);
         const cssVars = ['--primary', '--primary-color', '--brand-color', '--accent', '--secondary', '--theme-color'];
         cssVars.forEach(varName => {
           const value = rootStyles.getPropertyValue(varName).trim();
-          if (value && value !== '') {
-            colors.add(value);
-          }
+          if (value) addColor(value);
         });
 
-        // Strategy 3: Get colors from buttons/links (often use brand colors)
+        // Strategy 3: Get colors from buttons/links (highly weighted - often brand colors)
         const buttons = document.querySelectorAll('a, button, .btn, .button');
         Array.from(buttons).slice(0, 30).forEach(btn => {
           const computed = window.getComputedStyle(btn);
-          if (computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
-            colors.add(computed.backgroundColor);
-          }
-          if (computed.color) {
-            colors.add(computed.color);
-          }
+          addColor(computed.backgroundColor);
+          addColor(computed.color);
         });
 
-        return Array.from(colors);
+        // Return colors sorted by frequency (most common = more likely to be brand colors)
+        return Array.from(colorMap.entries())
+          .sort((a, b) => b[1] - a[1]) // Sort by count (descending)
+          .map(([color]) => color);
       }).catch(() => []);
 
       console.log(`[LOGO] CSS extraction found ${cssColors.length} colors in ${Date.now() - cssColorStart}ms`);
