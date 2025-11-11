@@ -141,7 +141,7 @@ export default function Home() {
             🚀 Powered by State-of-the-Art AI
           </h3>
           <p className="text-gray-600 text-sm mb-3">
-            Multi-vendor AI orchestration with intelligent cost optimization. Free tier → Mistral → Claude → OpenAI fallback chain ensures 99%+ success rate while minimizing costs.
+            Multi-vendor AI orchestration with intelligent cost optimization. Free tier → Mistral → Claude → OpenAI fallback chain increases success rate while minimizing costs.
           </p>
           <div className="flex flex-wrap gap-2">
             <span className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">Mistral AI</span>
