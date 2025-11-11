@@ -101,7 +101,12 @@ type ExtractedLogo = {
   raw: string | null;      // original img/src/favicon/header screenshot used
 };
 
-async function extractLogo(page: Page, baseUrl: string): Promise<ExtractedLogo> {
+async function extractLogo(
+  page: Page,
+  baseUrl: string,
+  startTime: number,
+  maxTime: number
+): Promise<ExtractedLogo> {
   console.log('[LOGO] Extracting logo...');
 
   const logoData = await page.evaluate((domain) => {
@@ -245,11 +250,23 @@ async function extractLogo(page: Page, baseUrl: string): Promise<ExtractedLogo> 
       }
     }
 
+    // Check if we have enough time for screenshot (need at least 12s remaining for logo + colors + text)
+    const elapsedBeforeLogo = Date.now() - startTime;
+    const remainingTime = maxTime - elapsedBeforeLogo;
+
+    if (remainingTime < 12000) {
+      console.log(`[LOGO] Skipping screenshot - insufficient time (${Math.round(remainingTime / 1000)}s remaining, need 12s)`);
+      return {
+        rendered: normalizedRaw,
+        raw: normalizedRaw
+      };
+    }
+
     // Try to screenshot the actual element
     try {
       const handle = await page.$(`[data-logo-candidate-id="${logoData.candidateId}"]`);
       if (handle) {
-        console.log('[LOGO] Screenshotting logo element...');
+        console.log(`[LOGO] Screenshotting logo element (${Math.round(remainingTime / 1000)}s remaining)...`);
         const buffer = await handle.screenshot({ type: 'png' });
         const logoScreenshot = `data:image/png;base64,${buffer.toString('base64')}`;
         console.log('[LOGO] Element screenshot successful');
@@ -1107,7 +1124,7 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
     console.log(`[TIME] Navigation complete in ${elapsed}ms`);
 
     // Extract logo
-    const logoResult = await extractLogo(page, url);
+    const logoResult = await extractLogo(page, url, startTime, MAX_TIME);
     const { rendered: logo, raw: logoRaw } = logoResult;
 
     // Extract colors - Stage 1: CSS signals (fast)
