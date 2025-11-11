@@ -201,6 +201,83 @@ We package everything into a **standard Docker container**:
 
 **Result:** We can switch platforms in **hours, not months**.
 
+### The Actual Dockerfile (Production-Ready)
+
+**Located at:** `/Dockerfile` in the project root
+
+```dockerfile
+# Use official Playwright image which includes all browser dependencies
+FROM mcr.microsoft.com/playwright:v1.56.1-noble
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy application code
+COPY . .
+
+# Build Next.js app
+RUN npm run build
+
+# Expose port
+EXPOSE 3000
+
+# Set environment variable for production
+ENV NODE_ENV=production
+ENV PORT=3000
+
+# Start the application
+CMD ["npm", "start"]
+```
+
+**Why This Dockerfile Works:**
+
+1. **Base Image:** `mcr.microsoft.com/playwright:v1.56.1-noble`
+   - Official Microsoft Playwright image
+   - Includes Chromium browser pre-installed
+   - Includes all system dependencies (libgbm, libasound2, etc.)
+   - Based on Ubuntu 24.04 LTS (noble)
+   - ~1.2 GB compressed
+
+2. **Build Process:**
+   - `npm ci` for reproducible installs
+   - Next.js build happens inside container
+   - All dependencies bundled
+
+3. **Runtime:**
+   - Runs on port 3000
+   - Production mode enabled
+   - Single command to start
+
+**Deploying This Container:**
+
+```bash
+# Build locally
+docker build -t logo-extract .
+
+# Run locally
+docker run -p 3000:3000 logo-extract
+
+# Push to any registry (Docker Hub, ECR, GCR, etc.)
+docker tag logo-extract your-registry/logo-extract:latest
+docker push your-registry/logo-extract:latest
+```
+
+**Platform-Specific Notes:**
+
+- **Render.com:** Auto-detects Dockerfile, builds automatically
+- **Fly.io:** `fly deploy` (detects Dockerfile automatically)
+- **AWS Lambda:** Push to ECR, create Lambda from container image
+- **Google Cloud Run:** Push to GCR, deploy with `gcloud run deploy`
+- **Azure Container Instances:** Push to ACR, deploy with `az container create`
+
+**Critical:** The Playwright base image is essential. A standard `node:20` image will NOT work because Chromium requires system libraries that aren't included in basic Node.js images.
+
 ---
 
 ## Part 4: Platform Options - Comprehensive 2025 Evaluation
@@ -877,7 +954,69 @@ START: What's your current volume?
 
 ---
 
-**Document Version:** 1.0 - 2025 State-of-the-Art
+## Appendix A: Common Deployment Issues & Solutions
+
+### Issue 1: 503 Service Unavailable on Render.com
+
+**Symptom:**
+```
+This page isn't working
+bizw.onrender.com is currently unable to handle this request.
+HTTP ERROR 503
+```
+
+**Root Cause:** Chromium browser dependencies not installed. Render's standard Node.js environment doesn't include the system libraries Playwright needs (libgbm, libasound2, libatk, etc.).
+
+**Solution:** Use Docker deployment with official Playwright image.
+
+**Fix Applied:**
+1. Created `/Dockerfile` using `mcr.microsoft.com/playwright:v1.56.1-noble` base image
+2. Render auto-detects Dockerfile and switches to Docker deployment
+3. All Chromium dependencies included in base image
+
+**Alternative Solutions (if not using Docker):**
+- Add `playwright install-deps` to build command (requires root access, won't work on all platforms)
+- Use managed browser service like Browserless.io
+- Switch to platform with better Playwright support (Fly.io, Railway)
+
+### Issue 2: node-vibrant Import Errors
+
+**Symptom:**
+```
+Type error: Module '"node-vibrant/node"' has no exported member 'Swatch'
+```
+
+**Root Cause:** node-vibrant v4.x changed export structure. `Swatch` type is not exported from `'node-vibrant/node'`.
+
+**Solution:** Import only `Vibrant`, use type inference for palette values.
+
+```typescript
+// CORRECT
+import { Vibrant } from 'node-vibrant/node';
+const palette = await vibrant.getPalette();
+const swatches = Object.values(palette).filter(s => s !== null);
+
+// INCORRECT
+import { Vibrant, Swatch } from 'node-vibrant/node'; // Swatch doesn't exist
+```
+
+### Issue 3: Build Succeeds Locally but Fails on Render
+
+**Common Causes:**
+1. Different Node.js versions (check `package.json` engines field)
+2. Missing environment variables
+3. Platform-specific dependencies (native modules)
+4. Case-sensitive file paths (macOS is case-insensitive, Linux is not)
+
+**Debugging Steps:**
+1. Check Render build logs for exact error
+2. Verify Node.js version matches local: add `"engines": { "node": "20.x" }` to package.json
+3. Test build in Docker locally: `docker build -t test .`
+4. Check for missing system dependencies
+
+---
+
+**Document Version:** 1.1 - 2025 State-of-the-Art
 **Last Updated:** November 10, 2025
 **Research Sources:** Industry reports, vendor documentation, production case studies
 **Classification:** Public - Vendor-Neutral Analysis
