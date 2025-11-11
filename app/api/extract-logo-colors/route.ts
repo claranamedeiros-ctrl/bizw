@@ -543,8 +543,6 @@ async function extractColorsFromScreenshot(page: Page): Promise<BrandColors> {
  * returned here is correct - any display issues should be fixed in the Brand Center UI.
  */
 async function extractTextBlocks(page: Page): Promise<TextBlocks> {
-  console.log('[TEXT] Extracting about and disclaimer text...');
-
   try {
     const textBlocks = await page.evaluate(() => {
       // Helper: normalize whitespace
@@ -980,8 +978,17 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
       };
     }
 
-    // Extract text blocks (about & disclaimer)
-    const textBlocks = await extractTextBlocks(page);
+    // Extract text blocks (about & disclaimer) - only if time permits
+    let textBlocks: TextBlocks = { about: null, disclaimer: null };
+    const elapsedBeforeText = Date.now() - startTime;
+
+    if (elapsedBeforeText < MAX_TIME - 4000) {
+      // Need at least 4 seconds for text extraction
+      console.log('[TEXT] Extracting about and disclaimer text...');
+      textBlocks = await extractTextBlocks(page);
+    } else {
+      console.log('[TEXT] Skipping text extraction due to time budget');
+    }
 
     await browser.close();
 
