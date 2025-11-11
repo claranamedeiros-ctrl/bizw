@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chromium } from 'playwright';
 import { Vibrant } from 'node-vibrant/node';
-import { ensureChromium } from '@/lib/ensure-chromium';
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,9 +22,6 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    // Ensure Chromium is installed before launching browser
-    await ensureChromium();
 
     let browser;
     try {
