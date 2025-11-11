@@ -108,8 +108,100 @@ export async function POST(request: NextRequest) {
         logoUrl = new URL(logoUrl, baseUrl.origin).href;
       }
 
-      // Take screenshot for color extraction - try header element first, fallback to top of viewport
-      console.log('[LOGO] Taking screenshot for color analysis...');
+      // OPTIMIZATION: Try to extract colors from CSS first (FAST - no screenshot needed)
+      console.log('[LOGO] Attempting fast CSS color extraction...');
+      const cssColorStart = Date.now();
+
+      const cssColors = await page.evaluate(() => {
+        const colors = new Set<string>();
+
+        // Get colors from header/nav elements
+        const headerElements = document.querySelectorAll('header, nav, .header, .navbar, [role="banner"]');
+
+        headerElements.forEach(el => {
+          const computed = window.getComputedStyle(el);
+
+          // Get background colors
+          if (computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+            colors.add(computed.backgroundColor);
+          }
+
+          // Get text colors
+          if (computed.color) {
+            colors.add(computed.color);
+          }
+
+          // Check child elements too
+          const children = el.querySelectorAll('*');
+          Array.from(children).slice(0, 20).forEach(child => {
+            const childComputed = window.getComputedStyle(child);
+            if (childComputed.backgroundColor && childComputed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+              colors.add(childComputed.backgroundColor);
+            }
+            if (childComputed.color) {
+              colors.add(childComputed.color);
+            }
+          });
+        });
+
+        return Array.from(colors);
+      }).catch(() => []);
+
+      console.log(`[LOGO] CSS extraction found ${cssColors.length} colors in ${Date.now() - cssColorStart}ms`);
+
+      // Convert rgb/rgba to hex
+      const rgbToHex = (rgb: string): string | null => {
+        const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (!match) return null;
+        const r = parseInt(match[1]);
+        const g = parseInt(match[2]);
+        const b = parseInt(match[3]);
+        return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+      };
+
+      const hexColors = cssColors
+        .map(rgbToHex)
+        .filter((c): c is string => c !== null)
+        .filter(c => {
+          // Filter out white/black/gray
+          const r = parseInt(c.slice(1, 3), 16);
+          const g = parseInt(c.slice(3, 5), 16);
+          const b = parseInt(c.slice(5, 7), 16);
+          const brightness = (r + g + b) / 3;
+          if (brightness > 240 || brightness < 20) return false;
+          const max = Math.max(r, g, b);
+          const min = Math.min(r, g, b);
+          const saturation = max === 0 ? 0 : (max - min) / max;
+          return saturation > 0.15;
+        });
+
+      console.log(`[LOGO] After filtering: ${hexColors.length} colorful CSS colors`);
+
+      let primary: string;
+      let secondary: string;
+      let colorPalette: string[];
+
+      // If we found enough colors in CSS, use them (FAST PATH - no screenshot!)
+      if (hexColors.length >= 2) {
+        console.log('[LOGO] ✓ Using CSS colors (no screenshot needed)');
+        primary = hexColors[0];
+        secondary = hexColors[1];
+        colorPalette = hexColors.slice(0, 6);
+
+        await browser.close();
+
+        return NextResponse.json({
+          logo: logoUrl,
+          colors: {
+            primary,
+            secondary,
+            palette: colorPalette,
+          },
+        });
+      }
+
+      // FALLBACK: Not enough CSS colors found, take screenshot (SLOW PATH)
+      console.log('[LOGO] Not enough CSS colors, falling back to screenshot analysis...');
       const screenshotStart = Date.now();
 
       let screenshotBuffer: Buffer;
