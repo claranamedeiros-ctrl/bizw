@@ -115,25 +115,22 @@ export async function POST(request: NextRequest) {
       const cssColors = await page.evaluate(() => {
         const colors = new Set<string>();
 
-        // Get colors from header/nav elements
-        const headerElements = document.querySelectorAll('header, nav, .header, .navbar, [role="banner"]');
+        // Strategy 1: Get colors from header/nav elements
+        const headerElements = document.querySelectorAll('header, nav, .header, .navbar, [role="banner"], .site-header, #header');
 
         headerElements.forEach(el => {
           const computed = window.getComputedStyle(el);
 
-          // Get background colors
           if (computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
             colors.add(computed.backgroundColor);
           }
-
-          // Get text colors
           if (computed.color) {
             colors.add(computed.color);
           }
 
-          // Check child elements too
+          // Check ALL child elements in header (not just first 20)
           const children = el.querySelectorAll('*');
-          Array.from(children).slice(0, 20).forEach(child => {
+          Array.from(children).forEach(child => {
             const childComputed = window.getComputedStyle(child);
             if (childComputed.backgroundColor && childComputed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
               colors.add(childComputed.backgroundColor);
@@ -141,7 +138,33 @@ export async function POST(request: NextRequest) {
             if (childComputed.color) {
               colors.add(childComputed.color);
             }
+            // Also get border colors
+            if (childComputed.borderColor && childComputed.borderColor !== 'rgba(0, 0, 0, 0)') {
+              colors.add(childComputed.borderColor);
+            }
           });
+        });
+
+        // Strategy 2: Get CSS variables (modern sites often use these for brand colors)
+        const rootStyles = window.getComputedStyle(document.documentElement);
+        const cssVars = ['--primary', '--primary-color', '--brand-color', '--accent', '--secondary', '--theme-color'];
+        cssVars.forEach(varName => {
+          const value = rootStyles.getPropertyValue(varName).trim();
+          if (value && value !== '') {
+            colors.add(value);
+          }
+        });
+
+        // Strategy 3: Get colors from buttons/links (often use brand colors)
+        const buttons = document.querySelectorAll('a, button, .btn, .button');
+        Array.from(buttons).slice(0, 30).forEach(btn => {
+          const computed = window.getComputedStyle(btn);
+          if (computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+            colors.add(computed.backgroundColor);
+          }
+          if (computed.color) {
+            colors.add(computed.color);
+          }
         });
 
         return Array.from(colors);
@@ -181,12 +204,18 @@ export async function POST(request: NextRequest) {
       let secondary: string;
       let colorPalette: string[];
 
-      // If we found enough colors in CSS, use them (FAST PATH - no screenshot!)
-      if (hexColors.length >= 2) {
-        console.log('[LOGO] ✓ Using CSS colors (no screenshot needed)');
+      // If we found ANY colors in CSS, use them (FAST PATH - no screenshot!)
+      // Even 1 color is better than timing out on screenshot
+      if (hexColors.length >= 1) {
+        console.log(`[LOGO] ✓ Using ${hexColors.length} CSS color(s) (no screenshot needed)`);
         primary = hexColors[0];
-        secondary = hexColors[1];
+        secondary = hexColors[1] || hexColors[0]; // Use primary again if only one color found
         colorPalette = hexColors.slice(0, 6);
+
+        // Pad palette if needed
+        while (colorPalette.length < 2) {
+          colorPalette.push(primary);
+        }
 
         await browser.close();
 

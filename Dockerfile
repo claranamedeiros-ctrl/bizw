@@ -14,6 +14,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV PW_TEST_SCREENSHOT_NO_FONTS_READY=1
 
 # Copy standalone build
 COPY --from=builder /app/.next/standalone ./
