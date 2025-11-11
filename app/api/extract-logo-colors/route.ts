@@ -1,9 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chromium } from 'playwright';
 import { Vibrant } from 'node-vibrant/node';
+import { execSync } from 'child_process';
+import { readdirSync, existsSync } from 'fs';
 
 export async function POST(request: NextRequest) {
   try {
+    // DEBUG: Log filesystem state
+    console.log('[DEBUG] HOME:', process.env.HOME);
+    console.log('[DEBUG] USER:', process.env.USER);
+    console.log('[DEBUG] PWD:', process.cwd());
+
+    // Check what's in the expected location
+    const expectedPath = '/opt/render/.cache/ms-playwright';
+    if (existsSync(expectedPath)) {
+      console.log('[DEBUG] Contents of', expectedPath, ':', readdirSync(expectedPath));
+    } else {
+      console.log('[DEBUG]', expectedPath, 'does NOT exist');
+    }
+
+    // Check what's in /ms-playwright (Playwright image location)
+    if (existsSync('/ms-playwright')) {
+      console.log('[DEBUG] Contents of /ms-playwright:', readdirSync('/ms-playwright'));
+    } else {
+      console.log('[DEBUG] /ms-playwright does NOT exist');
+    }
+
+    // Check what Playwright thinks its browser path is
+    try {
+      const browserPath = execSync('npx playwright --version', { encoding: 'utf-8' });
+      console.log('[DEBUG] Playwright version:', browserPath);
+    } catch (e) {
+      console.log('[DEBUG] Could not get Playwright version');
+    }
+
     const { url } = await request.json();
 
     if (!url) {
