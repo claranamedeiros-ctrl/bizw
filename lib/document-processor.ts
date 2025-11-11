@@ -7,10 +7,15 @@
  * 3. Falls back to more expensive methods if needed
  *
  * Processing Strategy:
- * - CSV/Excel: FREE (regex/pattern matching) → 95% accuracy, $0
- * - PDF/Images: Mistral OCR → 94.9% accuracy, $0.001/page
- * - Complex fallback: Claude → 85-90% accuracy, $0.02
- * - Ultimate fallback: GPT-4 Vision → 90-95% accuracy, $0.30
+ * - CSV/Excel: FREE (regex) → Mistral Text → Claude → GPT-4
+ *   - FREE: 95% accuracy, $0
+ *   - Mistral Text: 90% accuracy, $0.0001
+ *   - Claude: 85-90% accuracy, $0.02
+ *   - GPT-4: 90-95% accuracy, $0.30
+ * - PDF/Images: Mistral OCR → Claude → GPT-4
+ *   - Mistral OCR: 94.9% accuracy, $0.001/page
+ *   - Claude: 85-90% accuracy, $0.02
+ *   - GPT-4: 90-95% accuracy, $0.30
  */
 
 import * as fs from 'fs';
@@ -18,6 +23,7 @@ import * as fs from 'fs';
 // Import all processors
 import { extractFinancialDataFree } from './free-document-extraction';
 import { processPDFWithMistral, processImageWithMistral } from './mistral-ocr-extraction';
+import { extractFinancialDataWithMistral } from './mistral-text-extraction';
 import { extractFinancialDataWithClaude } from './claude-document-extraction';
 
 export type FileType = 'pdf' | 'image' | 'excel' | 'csv' | 'word' | 'unknown';
@@ -152,7 +158,7 @@ export class DocumentProcessor {
 
   /**
    * Process CSV files
-   * Strategy: FREE (regex) → Mistral → Claude → GPT-4
+   * Strategy: FREE (regex) → Mistral Text → Claude → GPT-4
    */
   private async processCSV(fileBuffer: Buffer, fileName: string): Promise<ProcessingResult> {
     console.log('[CSV] Starting processing...');
@@ -175,14 +181,14 @@ export class DocumentProcessor {
       };
     }
 
-    // Step 2: Try Mistral OCR (converts CSV to image internally if needed)
-    console.log('[CSV] FREE confidence low, trying Mistral OCR...');
+    // Step 2: Fallback to paid methods (Mistral Text → Claude → GPT-4)
+    console.log('[CSV] FREE confidence low, trying paid methods...');
     return this.fallbackToPaidMethods(fileBuffer, fileName, 'csv', freeResult);
   }
 
   /**
    * Process Excel files
-   * Strategy: FREE (xlsx library) → Mistral → Claude → GPT-4
+   * Strategy: FREE (xlsx library) → Mistral Text → Claude → GPT-4
    */
   private async processExcel(fileBuffer: Buffer, fileName: string): Promise<ProcessingResult> {
     console.log('[Excel] Starting processing...');
@@ -285,7 +291,7 @@ export class DocumentProcessor {
 
   /**
    * Process Word documents
-   * Strategy: Extract text → FREE → Mistral → Claude → GPT-4
+   * Strategy: Extract text → FREE → Mistral Text → Claude → GPT-4
    */
   private async processWord(fileBuffer: Buffer, fileName: string): Promise<ProcessingResult> {
     console.log('[Word] Starting processing...');
@@ -298,7 +304,9 @@ export class DocumentProcessor {
   }
 
   /**
-   * Fallback cascade: Mistral → Claude → GPT-4
+   * Fallback cascade:
+   * - CSV/Excel: Mistral Text → Claude → GPT-4
+   * - PDF/Images: Claude → GPT-4 (Mistral OCR already tried)
    */
   private async fallbackToPaidMethods(
     fileBuffer: Buffer,
@@ -306,7 +314,34 @@ export class DocumentProcessor {
     fileType: FileType,
     previousResult: any
   ): Promise<ProcessingResult> {
-    // Try Claude if available
+    // STEP 1: For CSV/Excel, try Mistral text model first (cheaper than Claude)
+    if ((fileType === 'csv' || fileType === 'excel') && process.env.MISTRAL_API_KEY) {
+      console.log('[Fallback] Trying Mistral text model for CSV/Excel...');
+
+      const mistralResult = await extractFinancialDataWithMistral(fileBuffer, fileName);
+
+      if (mistralResult.success && mistralResult.confidence >= this.CONFIDENCE_THRESHOLD_MISTRAL) {
+        console.log(`[Fallback] Mistral text sufficient (confidence: ${mistralResult.confidence}%)`);
+        return {
+          success: true,
+          data: mistralResult.data,
+          confidence: mistralResult.confidence,
+          cost: mistralResult.cost,
+          processingTime: mistralResult.processingTime,
+          method: 'mistral-text',
+          fileType,
+          fallbackUsed: true,
+        };
+      }
+
+      // Keep mistralResult as previousResult for potential merging
+      if (mistralResult.success) {
+        console.log('[Fallback] Mistral text confidence low, keeping partial data...');
+        previousResult = mistralResult;
+      }
+    }
+
+    // STEP 2: Try Claude if available
     if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
       console.log('[Fallback] Trying Claude via Bedrock...');
 
