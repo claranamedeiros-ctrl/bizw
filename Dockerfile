@@ -24,12 +24,8 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Install Chromium browsers in the location where Render expects them
-# Render runs as user 'render' with HOME=/opt/render
-# So Playwright looks for browsers at /opt/render/.cache/ms-playwright/
-RUN mkdir -p /opt/render/.cache && \
-    HOME=/opt/render npx --yes playwright@1.56.1 install chromium --with-deps && \
-    chmod -R 777 /opt/render/.cache
+# Chromium will be installed at runtime on first API request
+# by lib/ensure-chromium.ts (lazy installation)
 
 EXPOSE 3000
 
