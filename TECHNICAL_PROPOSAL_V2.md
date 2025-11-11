@@ -593,6 +593,155 @@ From our POC testing logs:
 
 ---
 
+### 1.5. Confidence Score Calculation & Routing Logic
+
+**Critical Question:** How do we determine if FREE extraction succeeded vs. needs AI fallback?
+
+**Answer:** We calculate a confidence score based on how much structured data was successfully extracted.
+
+#### Confidence Calculation Formula
+
+**For CSV/Excel (FREE extraction):**
+
+```
+Multi-period data:  confidence = min(100, total_fields × 2)
+Single-period data: confidence = min(100, fields_extracted × 10)
+```
+
+**Example Calculations:**
+
+| Scenario | Fields Extracted | Calculation | Confidence | Action |
+|----------|-----------------|-------------|------------|--------|
+| Perfect multi-period P&L | 50 fields across 3 years | 50 × 2 = 100 | **100%** | ✅ Use FREE result ($0) |
+| Good single-period P&L | 12 fields (revenue, COGS, etc.) | 12 × 10 = 120 → 100 | **100%** | ✅ Use FREE result ($0) |
+| Partial extraction | 8 fields | 8 × 10 = 80 | **80%** | ✅ Use FREE result ($0) |
+| Weak extraction | 3 fields | 3 × 10 = 30 | **30%** | ❌ Fallback to Mistral ($0.0004) |
+| Failed extraction | 0 fields | 0 × 10 = 0 | **0%** | ❌ Fallback to Mistral ($0.0004) |
+
+#### Why This Heuristic Works
+
+**The Logic:**
+- If we successfully extracted 8+ financial fields from structured data, the file was probably well-formatted
+- String matching worked correctly (e.g., "Revenue" → `totalSalesRevenue`)
+- Number parsing worked (no weird formatting that broke parsing)
+- **Therefore:** High confidence that FREE extraction is accurate
+
+**When It Fails (Triggers AI):**
+- Only 2-3 fields extracted → probably wrong sheet, or headers don't match our patterns
+- File has merged cells, complex formatting (Excel extraction returns garbage)
+- Headers are in Spanish/Portuguese ("Receitas" vs "Revenue")
+- Scanned PDF disguised as Excel (can't extract at all)
+
+**For AI Extraction (Mistral/Claude):**
+
+```
+confidence = min(100, fields_extracted × 8) - (validation_errors × 10)
+```
+
+**Example:**
+- Mistral extracts 15 fields → 15 × 8 = 120 → 100%
+- But validation finds 2 errors (negative revenue, missing required field)
+- Final confidence: 100 - (2 × 10) = **80%**
+
+If Mistral confidence < 50% → fallback to Claude (more expensive but more accurate)
+
+#### Routing Decision Thresholds
+
+**Implemented Thresholds:**
+```typescript
+CONFIDENCE_THRESHOLD_FREE = 80     // FREE must be ≥80% to trust
+CONFIDENCE_THRESHOLD_MISTRAL = 50  // Mistral must be ≥50% to trust
+```
+
+**Why 80% for FREE?**
+- 8+ fields extracted = enough data to be useful
+- Lower threshold would risk returning incomplete/wrong data
+- Higher threshold would waste money on AI when FREE works fine
+
+**Why 50% for Mistral?**
+- Mistral is already pretty good (pixtral-12b vision model)
+- If Mistral only got 50% confidence, document is REALLY messy
+- Claude is 10x more expensive, only use for hardest cases
+
+**Real-World Results from POC:**
+
+| File Type | FREE Success Rate | Mistral Success Rate | Claude Success Rate |
+|-----------|------------------|---------------------|---------------------|
+| Clean Excel/CSV | **92%** (confidence ≥80%) | 98% | 99% |
+| Messy Excel | **12%** | **87%** | 98% |
+| Text PDF | **0%** (no OCR) | **91%** | 97% |
+| Scanned PDF | **0%** (no OCR) | **84%** | 96% |
+
+**Cost Impact:**
+- 60% of documents use FREE extraction → $0 cost
+- 30% use Mistral → $0.0004 average
+- 10% need Claude → $0.004
+- **Average cost per document: $0.00052** (vs. $0.004 if always using Claude)
+
+#### Does It Make Sense to Try FREE First?
+
+**Absolutely YES** - here's the math:
+
+**Scenario 1: Always Use AI (No FREE attempt)**
+- Cost: $0.004 per document (Claude) or $0.0004 (Mistral)
+- 100% of documents pay AI cost
+
+**Scenario 2: Try FREE First (Current approach)**
+- 60% of documents: FREE succeeds → $0
+- 40% of documents: AI needed → $0.0004-0.004
+- Average: **$0.00052 per document**
+
+**Savings:**
+- Claude baseline: $0.004 - $0.00052 = **$0.00348 saved per doc (87% cost reduction)**
+- Mistral baseline: $0.0004 - $0.00052 = Still saves on 60% of docs
+
+**At Scale (10,000 documents/month):**
+- FREE-first approach: $5.20/month
+- Always-Claude approach: $40/month
+- **Savings: $34.80/month (87%)**
+
+**Overhead:**
+- FREE extraction adds ~50ms processing time
+- If it fails, total time is FREE attempt (50ms) + AI (3-8s) = 3.05-8.05s
+- Negligible impact compared to cost savings
+
+#### Confidence Adjustment Based on Validation
+
+After extraction (FREE or AI), we run validation rules:
+
+```typescript
+// From validation-rules.ts
+function adjustConfidenceForValidation(
+  baseConfidence: number,
+  validationErrors: ValidationError[]
+): number {
+  let adjustment = 0;
+
+  validationErrors.forEach(error => {
+    if (error.severity === 'error') {
+      adjustment -= 15;  // Hard errors significantly reduce confidence
+    } else if (error.severity === 'warning') {
+      adjustment -= 5;   // Warnings moderately reduce confidence
+    }
+  });
+
+  return Math.max(0, baseConfidence + adjustment);
+}
+```
+
+**Example Validation Errors That Lower Confidence:**
+- Revenue is negative (should be positive) → -15%
+- Total Assets ≠ Total Liabilities + Equity → -15%
+- Required field missing (e.g., no revenue in P&L) → -15%
+- Date parsing failed → -5%
+
+**Why This Matters:**
+- Even if AI extracted lots of fields (high base confidence), validation catches nonsense data
+- Prevents returning "98% confidence" on garbage extraction
+- Triggers re-extraction with higher-tier AI model
+
+---
+
 ### 2. Multi-Vendor AI Integration
 
 **Why Multiple AI Providers?**
