@@ -550,6 +550,17 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
         return text.replace(/\s+/g, ' ').trim();
       };
 
+      // Helper: get clean text from element (removes scripts, styles, CSS)
+      const getCleanText = (el: Element): string => {
+        const clone = el.cloneNode(true) as HTMLElement;
+
+        // Remove scripts, styles, noscript, and SVGs
+        clone.querySelectorAll('script, style, noscript, svg').forEach(n => n.remove());
+
+        const text = clone.textContent || '';
+        return normalize(text);
+      };
+
       // Helper: check if text contains keywords (case-insensitive)
       const containsKeywords = (text: string, keywords: string[]): boolean => {
         const lower = text.toLowerCase();
@@ -632,7 +643,7 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
               return;
             }
 
-            const text = normalize(el.textContent || '');
+            const text = getCleanText(el); // Use getCleanText to remove CSS/scripts
 
             // Filter: minimum/maximum length
             if (text.length < 80 || text.length > 2000) {
@@ -693,7 +704,7 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
 
           while (nextEl && attempts < 5) {
             if (nextEl.tagName === 'SECTION' || nextEl.tagName === 'DIV' || nextEl.tagName === 'ARTICLE') {
-              const text = normalize(nextEl.textContent || '');
+              const text = getCleanText(nextEl); // Use getCleanText to remove CSS/scripts
 
               if (text.length < 80 || text.length > 2000) {
                 nextEl = nextEl.nextElementSibling;
@@ -741,7 +752,7 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
       Array.from(mainAreas).slice(0, 3).forEach(area => {
         const sections = area.querySelectorAll('section, div');
         Array.from(sections).slice(0, 20).forEach(section => {
-          const text = normalize(section.textContent || '');
+          const text = getCleanText(section); // Use getCleanText to remove CSS/scripts
 
           if (text.length < 150 || text.length > 2000) {
             return;
@@ -773,11 +784,84 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
         });
       });
 
-      // Pick best about candidate
+      // Pick best about candidate from existing strategies
       aboutCandidates.sort((a, b) => b.score - a.score);
-      const aboutText = aboutCandidates.length > 0
+      let aboutText = aboutCandidates.length > 0
         ? aboutCandidates[0].text.substring(0, 1000) // Truncate to 1000 chars
         : null;
+
+      // ========================================================================
+      // FALLBACK A: Meta description (if no good about text found yet)
+      // ========================================================================
+      if (!aboutText) {
+        const metaDescription =
+          document.querySelector('meta[name="description"]')?.getAttribute('content') ||
+          document.querySelector('meta[property="og:description"]')?.getAttribute('content') ||
+          document.querySelector('meta[name="twitter:description"]')?.getAttribute('content');
+
+        if (metaDescription) {
+          const cleanMeta = normalize(metaDescription);
+          // Use meta description if it's a reasonable length
+          if (cleanMeta.length >= 60 && cleanMeta.length <= 400) {
+            // Avoid obvious junk (cookie banners, social link lists)
+            const junkKeywords = ['cookie', 'accept', 'terms and conditions', 'privacy policy', 'follow us'];
+            const hasJunk = junkKeywords.some(kw => cleanMeta.toLowerCase().includes(kw));
+
+            if (!hasJunk) {
+              aboutText = cleanMeta;
+            }
+          }
+        }
+      }
+
+      // ========================================================================
+      // FALLBACK B: Hero section (for sites like Rootstrap)
+      // ========================================================================
+      if (!aboutText) {
+        // Find hero section: first section in main or near top of body
+        const mainEl = document.querySelector('main');
+        const searchRoot = mainEl || document.body;
+        const heroSections = searchRoot.querySelectorAll('section, div');
+
+        for (let i = 0; i < Math.min(5, heroSections.length); i++) {
+          const section = heroSections[i];
+
+          // Look for h1 or h2 in this section
+          const heading = section.querySelector('h1, h2');
+          if (!heading) continue;
+
+          // Look for 1-3 paragraphs following the heading
+          const paragraphs = section.querySelectorAll('p');
+          if (paragraphs.length === 0) continue;
+
+          // Extract heading + first 1-3 paragraphs
+          const headingText = normalize(heading.textContent || '');
+          let bodyText = '';
+
+          for (let p = 0; p < Math.min(3, paragraphs.length); p++) {
+            bodyText += ' ' + normalize(paragraphs[p].textContent || '');
+          }
+          bodyText = bodyText.trim();
+
+          const heroText = headingText + '. ' + bodyText;
+
+          // Check length
+          if (heroText.length < 80 || heroText.length > 600) continue;
+
+          // Check link density
+          const heroLinkDensity = getLinkDensity(section);
+          if (heroLinkDensity > 0.4) continue;
+
+          // Avoid CTA-only blocks
+          const ctaKeywords = ['contact us', 'get started', 'sign up', 'learn more', 'click here'];
+          const isCTAOnly = ctaKeywords.filter(kw => heroText.toLowerCase().includes(kw)).length >= 2;
+          if (isCTAOnly) continue;
+
+          // This looks like a good hero section!
+          aboutText = heroText;
+          break;
+        }
+      }
 
       // ========================================================================
       // DISCLAIMER TEXT EXTRACTION
@@ -810,15 +894,21 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
       ];
 
       disclaimerElements.slice(0, 100).forEach(el => {
-        const text = normalize(el.textContent || '');
+        const text = getCleanText(el); // Use getCleanText to remove CSS/scripts
 
         // Must contain at least one disclaimer keyword
         if (!containsKeywords(text, disclaimerKeywords)) {
           return;
         }
 
-        // Length filter
-        if (text.length < 60 || text.length > 3000) {
+        // Length filter (60-1500 chars is reasonable for disclaimers)
+        if (text.length < 60 || text.length > 1500) {
+          return;
+        }
+
+        // Avoid footer nav/social link lists (high link density)
+        const linkDensity = getLinkDensity(el);
+        if (linkDensity > 0.5) { // More than 50% links = probably nav
           return;
         }
 
@@ -842,7 +932,7 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
         }
 
         // Length bonus (prefer mid-range)
-        if (text.length >= 200 && text.length <= 1500) {
+        if (text.length >= 200 && text.length <= 1000) {
           score += 20;
         }
 

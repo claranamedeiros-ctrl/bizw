@@ -9,6 +9,8 @@ interface ExtractionResult {
     secondary: string;
     palette: string[];
   };
+  about: string | null;      // NEW: Scraped about text
+  disclaimer: string | null; // NEW: Scraped disclaimer text
   error?: string;
 }
 
@@ -43,6 +45,8 @@ export default function LogoExtraction() {
         setResult({
           logo: null,
           colors: { primary: '', secondary: '', palette: [] },
+          about: null,
+          disclaimer: null,
           error: data.error
         });
       } else {
@@ -53,27 +57,14 @@ export default function LogoExtraction() {
       setResult({
         logo: null,
         colors: { primary: '', secondary: '', palette: [] },
+        about: null,
+        disclaimer: null,
         error: 'Failed to extract logo and colors'
       });
     } finally {
       setLoading(false);
       setTimeout(() => setProgress(''), 1000);
     }
-  };
-
-  // Auto-detect logo background based on primary color brightness
-  const getLogoBgClass = () => {
-    if (!result?.colors.primary) return 'bg-gray-100';
-
-    const hex = result.colors.primary;
-    const rgb = parseInt(hex.slice(1), 16);
-    const r = (rgb >> 16) & 255;
-    const g = (rgb >> 8) & 255;
-    const b = rgb & 255;
-    const brightness = (r + g + b) / 3;
-
-    // If primary is dark, use light background for logo
-    return brightness < 128 ? 'bg-gray-100' : 'bg-slate-900';
   };
 
   return (
@@ -134,12 +125,11 @@ export default function LogoExtraction() {
               {result.logo && (
                 <div className="bg-gray-50 rounded-lg p-6">
                   <h2 className="text-xl font-semibold text-gray-800 mb-4">Logo</h2>
-                  <div className={`flex items-center justify-center p-8 rounded-lg border-2 border-gray-300 min-h-[150px] ${getLogoBgClass()}`}>
+                  <div className="flex items-center justify-center p-8 rounded-lg border-2 border-gray-300 min-h-[150px] bg-white">
                     <img
                       src={result.logo}
                       alt="Extracted logo"
                       style={{ maxWidth: '500px', maxHeight: '200px', width: 'auto', height: 'auto' }}
-                      crossOrigin="anonymous"
                     />
                   </div>
                 </div>
@@ -198,6 +188,26 @@ export default function LogoExtraction() {
                   </div>
                 )}
               </div>
+
+              {/* About (Scraped) */}
+              {result.about && (
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h2 className="text-xl font-semibold text-gray-800 mb-4">About (Scraped from site)</h2>
+                  <div className="bg-white p-4 rounded-lg border border-gray-300">
+                    <p className="text-gray-700 leading-relaxed">{result.about}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Disclaimer (Scraped) */}
+              {result.disclaimer && (
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <h2 className="text-xl font-semibold text-gray-800 mb-4">Disclaimer (Scraped from site)</h2>
+                  <div className="bg-white p-4 rounded-lg border border-gray-300">
+                    <p className="text-gray-600 text-sm leading-relaxed">{result.disclaimer}</p>
+                  </div>
+                </div>
+              )}
 
               {/* Copy JSON */}
               <div className="bg-gray-50 rounded-lg p-6">
