@@ -272,11 +272,11 @@ export async function POST(request: NextRequest) {
 
       // Extract primary and secondary colors from filtered swatches
       // Fallback to any swatch if no colorful ones found
-      const primary = sortedSwatches[0]?.hex || allSwatches[0]?.hex || '#000000';
-      const secondary = sortedSwatches[1]?.hex || allSwatches[1]?.hex || '#FFFFFF';
+      primary = sortedSwatches[0]?.hex || allSwatches[0]?.hex || '#000000';
+      secondary = sortedSwatches[1]?.hex || allSwatches[1]?.hex || '#FFFFFF';
 
       // Get full palette (top 6 colors) - prefer colorful, but include all if not enough
-      const colorPalette = [
+      colorPalette = [
         ...sortedSwatches.slice(0, 6),
         ...allSwatches.slice(0, 6)
       ]
