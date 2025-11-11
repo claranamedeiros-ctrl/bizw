@@ -75,26 +75,48 @@ export async function POST(request: NextRequest) {
         (el) => el.getAttribute('content')
       ).catch(() => null);
 
-      // 2. Look for logo in common selectors
+      // 2. Look for logo in common selectors - find the LARGEST logo
       const logoSelectors = [
         'img[alt*="logo" i]',
         'img[class*="logo" i]',
         'img[id*="logo" i]',
         'a[class*="logo" i] img',
-        'header img:first-of-type',
-        '.header img:first-of-type',
-        '.navbar img:first-of-type',
-        'nav img:first-of-type',
+        'header img',
+        '.header img',
+        '.navbar img',
+        'nav img',
       ];
 
-      for (const selector of logoSelectors) {
-        if (logoUrl) break;
-        logoUrl = await page.$eval(selector, (el) => {
-          if (el instanceof HTMLImageElement) {
-            return el.src;
-          }
-          return null;
-        }).catch(() => null);
+      // Find ALL potential logos and pick the largest one
+      const potentialLogos = await page.evaluate((selectors) => {
+        const logos: Array<{src: string, width: number, height: number, area: number}> = [];
+
+        selectors.forEach(selector => {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach(el => {
+            if (el instanceof HTMLImageElement && el.src) {
+              const area = el.naturalWidth * el.naturalHeight;
+              // Only consider logos bigger than 30x30 pixels
+              if (el.naturalWidth > 30 && el.naturalHeight > 30) {
+                logos.push({
+                  src: el.src,
+                  width: el.naturalWidth,
+                  height: el.naturalHeight,
+                  area: area
+                });
+              }
+            }
+          });
+        });
+
+        // Sort by area (largest first)
+        logos.sort((a, b) => b.area - a.area);
+
+        return logos.length > 0 ? logos[0].src : null;
+      }, logoSelectors).catch(() => null);
+
+      if (potentialLogos) {
+        logoUrl = potentialLogos;
       }
 
       // Fallback to og:image if no logo found
