@@ -1072,12 +1072,15 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
     let textBlocks: TextBlocks = { about: null, disclaimer: null };
     const elapsedBeforeText = Date.now() - startTime;
 
-    if (elapsedBeforeText < MAX_TIME - 4000) {
-      // Need at least 4 seconds for text extraction
-      console.log('[TEXT] Extracting about and disclaimer text...');
+    // Be conservative: skip text extraction if less than 6s remaining
+    // (Text extraction on slow sites can take 8-12 seconds)
+    if (elapsedBeforeText < MAX_TIME - 6000) {
+      const remainingTime = MAX_TIME - elapsedBeforeText;
+      console.log(`[TEXT] Extracting about and disclaimer text (${Math.round(remainingTime / 1000)}s remaining)...`);
       textBlocks = await extractTextBlocks(page);
     } else {
-      console.log('[TEXT] Skipping text extraction due to time budget');
+      const remainingTime = MAX_TIME - elapsedBeforeText;
+      console.log(`[TEXT] Skipping text extraction - insufficient time (only ${Math.round(remainingTime / 1000)}s remaining, need 6s)`);
     }
 
     await browser.close();
