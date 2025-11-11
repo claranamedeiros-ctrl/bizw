@@ -537,6 +537,10 @@ async function extractColorsFromScreenshot(page: Page): Promise<BrandColors> {
 /**
  * Extract "About" and "Disclaimer" text from the page
  * Best-effort heuristics for Brand Center defaults
+ *
+ * NOTE: Logo rendering issues (white/washed-out appearance) are front-end CSS problems
+ * (background color, opacity, filters), not backend extraction issues. The logo URL
+ * returned here is correct - any display issues should be fixed in the Brand Center UI.
  */
 async function extractTextBlocks(page: Page): Promise<TextBlocks> {
   console.log('[TEXT] Extracting about and disclaimer text...');
@@ -552,6 +556,50 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
       const containsKeywords = (text: string, keywords: string[]): boolean => {
         const lower = text.toLowerCase();
         return keywords.some(kw => lower.includes(kw.toLowerCase()));
+      };
+
+      // Helper: check if element is inside navigation/header (likely not content)
+      const isInNavigation = (el: Element): boolean => {
+        let parent = el.parentElement;
+        let depth = 0;
+        while (parent && depth < 10) {
+          const tag = parent.tagName.toLowerCase();
+          if (tag === 'nav' || tag === 'header' || parent.getAttribute('role') === 'navigation') {
+            return true;
+          }
+          parent = parent.parentElement;
+          depth++;
+        }
+        return false;
+      };
+
+      // Helper: calculate link density (ratio of link text to total text)
+      const getLinkDensity = (el: Element): number => {
+        const totalText = el.textContent?.length || 0;
+        if (totalText === 0) return 1;
+
+        const links = el.querySelectorAll('a');
+        let linkText = 0;
+        links.forEach(link => {
+          linkText += link.textContent?.length || 0;
+        });
+
+        return linkText / totalText;
+      };
+
+      // Helper: check if element is in main content area
+      const isInMainContent = (el: Element): boolean => {
+        let parent = el.parentElement;
+        let depth = 0;
+        while (parent && depth < 10) {
+          const tag = parent.tagName.toLowerCase();
+          if (tag === 'main' || tag === 'article' || parent.getAttribute('role') === 'main') {
+            return true;
+          }
+          parent = parent.parentElement;
+          depth++;
+        }
+        return false;
       };
 
       // ========================================================================
@@ -581,51 +629,150 @@ async function extractTextBlocks(page: Page): Promise<TextBlocks> {
         try {
           const elements = document.querySelectorAll(selector);
           Array.from(elements).slice(0, 10).forEach(el => {
-            const text = normalize(el.textContent || '');
-            if (text.length >= 80 && text.length <= 2000) {
-              // Score based on keywords
-              let score = text.length / 10; // Base score from length
-
-              if (containsKeywords(text, ['clients', 'firm', 'company', 'advisory', 'valuation', 'financial', 'services', 'experience'])) {
-                score += 50;
-              }
-
-              aboutCandidates.push({ text, score });
+            // Skip if in navigation/header
+            if (isInNavigation(el)) {
+              return;
             }
+
+            const text = normalize(el.textContent || '');
+
+            // Filter: minimum/maximum length
+            if (text.length < 80 || text.length > 2000) {
+              return;
+            }
+
+            // Filter: too much link density (probably navigation)
+            const linkDensity = getLinkDensity(el);
+            if (linkDensity > 0.4) { // More than 40% links = probably nav
+              return;
+            }
+
+            // Score based on multiple factors
+            let score = text.length / 10; // Base score from length
+
+            // Keyword bonus
+            if (containsKeywords(text, ['clients', 'firm', 'company', 'advisory', 'valuation', 'financial', 'services', 'experience', 'team', 'professionals', 'expertise'])) {
+              score += 50;
+            }
+
+            // Main content bonus
+            if (isInMainContent(el)) {
+              score += 30;
+            }
+
+            // Low link density bonus (more content, less navigation)
+            if (linkDensity < 0.15) {
+              score += 20;
+            }
+
+            // Multiple paragraphs bonus (real content)
+            const paragraphs = el.querySelectorAll('p');
+            if (paragraphs.length >= 2) {
+              score += 30;
+            }
+
+            aboutCandidates.push({ text, score });
           });
         } catch (e) {
           // Skip if selector fails
         }
       });
 
-      // Strategy 2: Look for headings with "about" keywords followed by paragraphs
+      // Strategy 2: Look for headings with "about" keywords followed by content
       const headings = document.querySelectorAll('h1, h2, h3');
       Array.from(headings).slice(0, 20).forEach(heading => {
         const headingText = normalize(heading.textContent || '');
 
-        if (containsKeywords(headingText, ['About', 'About Us', 'Our Firm', 'Who We Are', 'Our Company', 'Our Story'])) {
-          // Find the next sibling section/div/article or collect following paragraphs
+        if (containsKeywords(headingText, ['About', 'About Us', 'Our Firm', 'Who We Are', 'Our Company', 'Our Story', 'Our Team'])) {
+          // Skip if heading is in navigation
+          if (isInNavigation(heading)) {
+            return;
+          }
+
+          // Find the next sibling section/div/article
           let nextEl = heading.nextElementSibling;
           let attempts = 0;
 
           while (nextEl && attempts < 5) {
             if (nextEl.tagName === 'SECTION' || nextEl.tagName === 'DIV' || nextEl.tagName === 'ARTICLE') {
               const text = normalize(nextEl.textContent || '');
-              if (text.length >= 80 && text.length <= 2000) {
-                let score = text.length / 10 + 100; // Bonus for following heading
 
-                if (containsKeywords(text, ['clients', 'firm', 'company', 'advisory', 'valuation', 'financial', 'services', 'experience'])) {
-                  score += 50;
-                }
-
-                aboutCandidates.push({ text, score });
+              if (text.length < 80 || text.length > 2000) {
+                nextEl = nextEl.nextElementSibling;
+                attempts++;
+                continue;
               }
+
+              const linkDensity = getLinkDensity(nextEl);
+              if (linkDensity > 0.4) {
+                nextEl = nextEl.nextElementSibling;
+                attempts++;
+                continue;
+              }
+
+              let score = text.length / 10 + 100; // Bonus for following heading
+
+              if (containsKeywords(text, ['clients', 'firm', 'company', 'advisory', 'valuation', 'financial', 'services', 'experience', 'team', 'professionals', 'expertise'])) {
+                score += 50;
+              }
+
+              if (isInMainContent(nextEl)) {
+                score += 30;
+              }
+
+              if (linkDensity < 0.15) {
+                score += 20;
+              }
+
+              const paragraphs = nextEl.querySelectorAll('p');
+              if (paragraphs.length >= 2) {
+                score += 30;
+              }
+
+              aboutCandidates.push({ text, score });
               break;
             }
             nextEl = nextEl.nextElementSibling;
             attempts++;
           }
         }
+      });
+
+      // Strategy 3: Look in main content areas for substantial text blocks
+      const mainAreas = document.querySelectorAll('main, article, [role="main"]');
+      Array.from(mainAreas).slice(0, 3).forEach(area => {
+        const sections = area.querySelectorAll('section, div');
+        Array.from(sections).slice(0, 20).forEach(section => {
+          const text = normalize(section.textContent || '');
+
+          if (text.length < 150 || text.length > 2000) {
+            return;
+          }
+
+          const linkDensity = getLinkDensity(section);
+          if (linkDensity > 0.3) {
+            return;
+          }
+
+          // Must have business-related content
+          if (!containsKeywords(text, ['clients', 'firm', 'company', 'advisory', 'valuation', 'financial', 'services', 'experience', 'team', 'professionals', 'expertise', 'business', 'industry'])) {
+            return;
+          }
+
+          let score = text.length / 10 + 20; // Base score
+
+          // Multiple paragraphs
+          const paragraphs = section.querySelectorAll('p');
+          if (paragraphs.length >= 3) {
+            score += 40;
+          }
+
+          if (linkDensity < 0.1) {
+            score += 30;
+          }
+
+          aboutCandidates.push({ text, score });
+        });
       });
 
       // Pick best about candidate
