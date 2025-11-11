@@ -1,34 +1,415 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { chromium } from 'playwright';
+import { chromium, Browser, Page } from 'playwright';
 import { Vibrant } from 'node-vibrant/node';
 
+// ============================================================================
+// TYPES
+// ============================================================================
+
+interface LogoCandidate {
+  src: string;
+  source: 'explicit-logo' | 'header-img' | 'favicon' | 'screenshot';
+  score: number;
+}
+
+interface ColorSignals {
+  themeColor?: string;
+  cssVars: Record<string, string>;
+  backgrounds: string[];
+  accents: string[];
+}
+
+interface BrandColors {
+  primary: string;
+  secondary: string;
+  palette: string[];
+}
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function rgbToHex(rgb: string): string | null {
+  const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!match) return null;
+  const [_, r, g, b] = match.map(Number);
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? [
+    parseInt(result[1], 16),
+    parseInt(result[2], 16),
+    parseInt(result[3], 16)
+  ] : null;
+}
+
+function getBrightness(hex: string): number {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0;
+  return (rgb[0] + rgb[1] + rgb[2]) / 3;
+}
+
+function getSaturation(hex: string): number {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return 0;
+  const [r, g, b] = rgb;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  return max === 0 ? 0 : (max - min) / max;
+}
+
+function isGoodColor(hex: string): boolean {
+  const brightness = getBrightness(hex);
+  const saturation = getSaturation(hex);
+
+  // Filter out near-white, near-black, and grays
+  if (brightness > 240 || brightness < 20) return false;
+  if (saturation < 0.15) return false;
+
+  return true;
+}
+
+function scoreColor(hex: string, weight: number, frequency: number): number {
+  const saturation = getSaturation(hex);
+  return weight * frequency * (1 + saturation);
+}
+
+// ============================================================================
+// LOGO EXTRACTION
+// ============================================================================
+
+async function extractLogo(page: Page, baseUrl: string): Promise<string | null> {
+  console.log('[LOGO] Extracting logo...');
+
+  const logoUrl = await page.evaluate((domain) => {
+    // Priority 1: Explicit logo elements in header/nav
+    const headers = document.querySelectorAll('header, nav, [role="banner"], .site-header');
+
+    for (const header of Array.from(headers)) {
+      // Check images with "logo" semantics
+      const logoImg = header.querySelector('img[alt*="logo" i], img[class*="logo" i], img[id*="logo" i]');
+      if (logoImg instanceof HTMLImageElement && logoImg.src) {
+        return logoImg.src;
+      }
+
+      // Check images with "logo" in filename
+      const images = header.querySelectorAll('img');
+      for (const img of Array.from(images)) {
+        if (img instanceof HTMLImageElement && img.src) {
+          const filename = img.src.split('/').pop()?.toLowerCase() || '';
+          if (filename.includes('logo') || filename.includes(domain)) {
+            return img.src;
+          }
+        }
+      }
+
+      // Check SVGs with logo semantics
+      const logoSvg = header.querySelector('svg[class*="logo" i], svg[id*="logo" i], svg[aria-label*="logo" i]');
+      if (logoSvg) {
+        // Try to get href/src from use/image elements inside
+        const svgImg = logoSvg.querySelector('image');
+        if (svgImg instanceof SVGImageElement && svgImg.href.baseVal) {
+          return svgImg.href.baseVal;
+        }
+      }
+    }
+
+    // Priority 2: Elements with background-image containing "logo"
+    const allElements = document.querySelectorAll('[class*="logo" i], [id*="logo" i]');
+    for (const el of Array.from(allElements)) {
+      const bgImg = window.getComputedStyle(el).backgroundImage;
+      if (bgImg && bgImg !== 'none') {
+        const urlMatch = bgImg.match(/url\(['"]?(.+?)['"]?\)/);
+        if (urlMatch && urlMatch[1].includes('logo')) {
+          return urlMatch[1];
+        }
+      }
+    }
+
+    // Priority 3: First reasonable image in header
+    for (const header of Array.from(headers)) {
+      const img = header.querySelector('img');
+      if (img instanceof HTMLImageElement && img.src && img.naturalWidth >= 80) {
+        return img.src;
+      }
+    }
+
+    return null;
+  }, new URL(baseUrl).hostname.split('.')[0]).catch(() => null);
+
+  if (logoUrl) {
+    // Make absolute
+    if (!logoUrl.startsWith('http')) {
+      const base = new URL(baseUrl);
+      return new URL(logoUrl, base.origin).href;
+    }
+    return logoUrl;
+  }
+
+  // Priority 4: Favicon fallback
+  const favicon = await page.$eval(
+    'link[rel*="icon"], link[rel="mask-icon"]',
+    (el) => el.getAttribute('href')
+  ).catch(() => null);
+
+  if (favicon) {
+    if (!favicon.startsWith('http')) {
+      const base = new URL(baseUrl);
+      return new URL(favicon, base.origin).href;
+    }
+    return favicon;
+  }
+
+  // Priority 5: Screenshot header (last resort)
+  console.log('[LOGO] No logo found in DOM, screenshotting header...');
+  try {
+    const headerEl = await page.$('header, nav, [role="banner"]').catch(() => null);
+    let screenshot: Buffer;
+
+    if (headerEl) {
+      screenshot = await headerEl.screenshot({ type: 'png' });
+    } else {
+      screenshot = await page.screenshot({
+        type: 'png',
+        clip: { x: 0, y: 0, width: 800, height: 200 }
+      });
+    }
+
+    return `data:image/png;base64,${screenshot.toString('base64')}`;
+  } catch (error) {
+    console.error('[LOGO] Screenshot failed:', error);
+    return null;
+  }
+}
+
+// ============================================================================
+// COLOR EXTRACTION - STAGE 1: CSS SIGNALS
+// ============================================================================
+
+async function collectDomColorSignals(page: Page): Promise<ColorSignals> {
+  console.log('[COLOR] Collecting CSS/DOM signals...');
+
+  return await page.evaluate(() => {
+    const signals: ColorSignals = {
+      cssVars: {},
+      backgrounds: [],
+      accents: []
+    };
+
+    // 1. Meta theme-color (highest priority)
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) {
+      const content = themeMeta.getAttribute('content');
+      if (content) signals.themeColor = content;
+    }
+
+    // 2. CSS custom properties on :root
+    const rootStyles = window.getComputedStyle(document.documentElement);
+    const varNames = [
+      '--primary', '--primary-color', '--brand', '--brand-color',
+      '--accent', '--accent-color', '--theme', '--theme-color',
+      '--bg', '--background', '--text-color'
+    ];
+
+    varNames.forEach(varName => {
+      const value = rootStyles.getPropertyValue(varName).trim();
+      if (value && value !== '' && !value.includes('var(')) {
+        signals.cssVars[varName] = value;
+      }
+    });
+
+    // 3. Background colors from structural elements
+    const structuralSelectors = [
+      'body', 'html',
+      'header', 'nav', '[role="banner"]',
+      '.header', '.navbar', '.site-header',
+      '.hero', '[class*="hero"]', 'main > section:first-child'
+    ];
+
+    structuralSelectors.forEach(selector => {
+      const els = document.querySelectorAll(selector);
+      els.forEach(el => {
+        const bg = window.getComputedStyle(el).backgroundColor;
+        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+          signals.backgrounds.push(bg);
+        }
+      });
+    });
+
+    // 4. Accent colors from interactive elements
+    const interactiveSelectors = [
+      'a', 'button',
+      '.btn', '.button', '[class*="btn"]',
+      '.cta', '[class*="cta"]',
+      '[class*="primary"]', '[class*="accent"]'
+    ];
+
+    const accentSet = new Set<string>();
+    interactiveSelectors.forEach(selector => {
+      const els = Array.from(document.querySelectorAll(selector)).slice(0, 40);
+      els.forEach(el => {
+        const computed = window.getComputedStyle(el);
+        const bg = computed.backgroundColor;
+        const color = computed.color;
+
+        if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+          accentSet.add(bg);
+        }
+        if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
+          accentSet.add(color);
+        }
+      });
+    });
+
+    signals.accents = Array.from(accentSet);
+
+    return signals;
+  });
+}
+
+function deriveBrandColorsFromSignals(signals: ColorSignals): BrandColors | null {
+  console.log('[COLOR] Deriving brand colors from CSS signals...');
+
+  const colorScores = new Map<string, { hex: string, score: number }>();
+
+  const addColor = (rgb: string, weight: number) => {
+    const hex = rgbToHex(rgb);
+    if (!hex || !isGoodColor(hex)) return;
+
+    const existing = colorScores.get(hex);
+    if (existing) {
+      existing.score += weight;
+    } else {
+      colorScores.set(hex, { hex, score: weight });
+    }
+  };
+
+  // Weight by importance
+  if (signals.themeColor) {
+    const hex = signals.themeColor.startsWith('#')
+      ? signals.themeColor
+      : rgbToHex(signals.themeColor);
+    if (hex && isGoodColor(hex)) {
+      colorScores.set(hex, { hex, score: 100 }); // Highest weight
+    }
+  }
+
+  Object.values(signals.cssVars).forEach(value => addColor(value, 50));
+  signals.backgrounds.forEach(bg => addColor(bg, 20));
+  signals.accents.forEach(accent => addColor(accent, 30));
+
+  const sorted = Array.from(colorScores.values())
+    .sort((a, b) => b.score - a.score);
+
+  if (sorted.length < 1) return null;
+
+  const primary = sorted[0].hex;
+  const secondary = sorted.length > 1 ? sorted[1].hex : primary;
+  const palette = sorted.slice(0, 6).map(c => c.hex);
+
+  console.log(`[COLOR] CSS-derived: ${sorted.length} colors, primary=${primary}`);
+
+  return { primary, secondary, palette };
+}
+
+// ============================================================================
+// COLOR EXTRACTION - STAGE 2: SCREENSHOT FALLBACK
+// ============================================================================
+
+async function extractColorsFromScreenshot(page: Page): Promise<BrandColors> {
+  console.log('[COLOR] Falling back to screenshot + Vibrant...');
+
+  let screenshot: Buffer;
+
+  try {
+    const headerEl = await page.$('header, .header, nav, .navbar').catch(() => null);
+    if (headerEl) {
+      screenshot = await headerEl.screenshot({ type: 'jpeg', quality: 60 });
+    } else {
+      screenshot = await page.screenshot({
+        type: 'jpeg',
+        quality: 60,
+        clip: { x: 0, y: 0, width: 600, height: 200 }
+      });
+    }
+  } catch (error) {
+    console.error('[COLOR] Screenshot failed:', error);
+    // Return defaults
+    return {
+      primary: '#000000',
+      secondary: '#FFFFFF',
+      palette: ['#000000', '#FFFFFF']
+    };
+  }
+
+  const vibrant = new Vibrant(screenshot);
+  const palette = await vibrant.getPalette();
+
+  // Prefer named swatches for better brand color selection
+  const namedSwatches = [
+    palette.Vibrant,
+    palette.DarkVibrant,
+    palette.LightVibrant,
+    palette.Muted,
+    palette.DarkMuted,
+    palette.LightMuted
+  ].filter(s => s !== null && s !== undefined);
+
+  const goodColors = namedSwatches
+    .map(s => s!.hex)
+    .filter(isGoodColor);
+
+  if (goodColors.length === 0) {
+    // Absolute fallback
+    const allSwatches = Object.values(palette).filter(s => s !== null);
+    const primary = allSwatches[0]?.hex || '#000000';
+    const secondary = allSwatches[1]?.hex || '#FFFFFF';
+    return {
+      primary,
+      secondary,
+      palette: allSwatches.slice(0, 6).map(s => s!.hex)
+    };
+  }
+
+  return {
+    primary: goodColors[0],
+    secondary: goodColors[1] || goodColors[0],
+    palette: goodColors.slice(0, 6)
+  };
+}
+
+// ============================================================================
+// MAIN API HANDLER
+// ============================================================================
+
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  const MAX_TIME = 15000; // 15 second hard limit
+
   try {
     const { url } = await request.json();
 
     if (!url) {
-      return NextResponse.json(
-        { error: 'URL is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
 
-    // Validate URL format
+    // Validate URL
+    let parsedUrl: URL;
     try {
-      new URL(url);
+      parsedUrl = new URL(url);
     } catch {
-      return NextResponse.json(
-        { error: 'Invalid URL format' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
     }
 
-    let browser;
-    try {
-      console.log('[LOGO] Launching browser...');
-      const startTime = Date.now();
+    let browser: Browser | undefined;
 
-      // Launch browser with args for better compatibility in Docker/Render
+    try {
+      console.log('[REQUEST] Starting extraction for:', url);
+
+      // Launch browser
+      console.log('[BROWSER] Launching...');
       browser = await chromium.launch({
         headless: true,
         args: [
@@ -36,11 +417,11 @@ export async function POST(request: NextRequest) {
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
-          '--single-process', // Use single process to save memory
-          '--no-zygote' // Don't use zygote process
+          '--single-process',
+          '--no-zygote',
+          '--force-color-profile=srgb' // Better color accuracy
         ]
       });
-      console.log(`[LOGO] Browser launched in ${Date.now() - startTime}ms`);
 
       const context = await browser.newContext({
         viewport: { width: 1920, height: 1080 },
@@ -48,312 +429,72 @@ export async function POST(request: NextRequest) {
       });
 
       const page = await context.newPage();
-      console.log('[LOGO] New page created');
 
-      // Navigate to the page with more lenient settings
-      console.log(`[LOGO] Navigating to ${url}...`);
-      const navStart = Date.now();
-
+      // Navigate with timeout
+      console.log('[NAV] Navigating to', url);
       await page.goto(url, {
         waitUntil: 'domcontentloaded',
-        timeout: 20000, // 20 seconds max for navigation
+        timeout: 20000
       });
 
-      console.log(`[LOGO] Navigation completed in ${Date.now() - navStart}ms`);
+      await page.waitForTimeout(500); // Let images load
 
-      // Wait a brief moment for images to load
-      await page.waitForTimeout(500);
-      console.log('[LOGO] Page settled');
+      const elapsed = Date.now() - startTime;
+      console.log(`[TIME] Navigation complete in ${elapsed}ms`);
 
-      // Extract logo URL
-      let logoUrl: string | null = null;
-
-      // Try multiple methods to find the logo
-      // 1. Look for og:image meta tag
-      const ogImage = await page.$eval(
-        'meta[property="og:image"]',
-        (el) => el.getAttribute('content')
-      ).catch(() => null);
-
-      // 2. Look for the company logo - SIMPLE approach, check in order of priority
-      logoUrl = await page.evaluate(() => {
-        // Priority 1: Image with "logo" in the FILENAME inside header/nav
-        const headerImages = document.querySelectorAll('header img, nav img, [role="banner"] img');
-        for (const img of Array.from(headerImages)) {
-          if (img instanceof HTMLImageElement && img.src) {
-            const srcLower = img.src.toLowerCase();
-            // Check if filename (not full URL) contains "logo"
-            const filename = srcLower.split('/').pop() || '';
-            if (filename.includes('logo')) {
-              return img.src;
-            }
-          }
-        }
-
-        // Priority 2: First image in header with alt="logo" or class="logo"
-        for (const img of Array.from(headerImages)) {
-          if (img instanceof HTMLImageElement && img.src) {
-            const alt = (img.alt || '').toLowerCase();
-            const className = (img.className || '').toLowerCase();
-            if (alt.includes('logo') || className.includes('logo')) {
-              return img.src;
-            }
-          }
-        }
-
-        // Priority 3: First image in header (fallback)
-        const firstHeaderImg = document.querySelector('header img, nav img');
-        if (firstHeaderImg instanceof HTMLImageElement && firstHeaderImg.src) {
-          return firstHeaderImg.src;
-        }
-
-        return null;
-      }).catch(() => null);
-
-      // Fallback to og:image if no logo found
-      if (!logoUrl && ogImage) {
-        logoUrl = ogImage;
+      // Check time budget
+      if (elapsed > MAX_TIME - 5000) {
+        throw new Error('Time budget exceeded during navigation');
       }
 
-      // Make logo URL absolute if it's relative
-      if (logoUrl && !logoUrl.startsWith('http')) {
-        const baseUrl = new URL(url);
-        logoUrl = new URL(logoUrl, baseUrl.origin).href;
-      }
+      // Extract logo
+      const logo = await extractLogo(page, url);
 
-      // OPTIMIZATION: Try to extract colors from CSS first (FAST - no screenshot needed)
-      console.log('[LOGO] Attempting fast CSS color extraction...');
-      const cssColorStart = Date.now();
+      // Extract colors - Stage 1: CSS signals (fast)
+      const signals = await collectDomColorSignals(page);
+      let colors = deriveBrandColorsFromSignals(signals);
 
-      const cssColors = await page.evaluate(() => {
-        const colorMap = new Map<string, number>(); // Track color frequency
+      const elapsedAfterCSS = Date.now() - startTime;
+      console.log(`[TIME] After CSS extraction: ${elapsedAfterCSS}ms`);
 
-        const addColor = (color: string) => {
-          if (color && color !== 'rgba(0, 0, 0, 0)' && color !== 'transparent') {
-            // Ignore gradients (they're usually decorative, not brand colors)
-            if (color.includes('gradient')) return;
-
-            const count = colorMap.get(color) || 0;
-            colorMap.set(color, count + 1);
-          }
+      // Stage 2: Screenshot fallback (only if needed and time permits)
+      if (!colors && elapsedAfterCSS < MAX_TIME - 3000) {
+        colors = await extractColorsFromScreenshot(page);
+      } else if (!colors) {
+        console.log('[COLOR] Skipping screenshot due to time budget');
+        colors = {
+          primary: '#000000',
+          secondary: '#FFFFFF',
+          palette: ['#000000', '#FFFFFF']
         };
-
-        // Strategy 1: Get colors from header/nav elements
-        const headerElements = document.querySelectorAll('header, nav, .header, .navbar, [role="banner"], .site-header, #header');
-
-        headerElements.forEach(el => {
-          const computed = window.getComputedStyle(el);
-          addColor(computed.backgroundColor);
-          addColor(computed.color);
-
-          // Check child elements
-          const children = el.querySelectorAll('*');
-          Array.from(children).forEach(child => {
-            const childComputed = window.getComputedStyle(child);
-            addColor(childComputed.backgroundColor);
-            addColor(childComputed.color);
-            addColor(childComputed.borderColor);
-          });
-        });
-
-        // Strategy 2: Get CSS variables
-        const rootStyles = window.getComputedStyle(document.documentElement);
-        const cssVars = ['--primary', '--primary-color', '--brand-color', '--accent', '--secondary', '--theme-color'];
-        cssVars.forEach(varName => {
-          const value = rootStyles.getPropertyValue(varName).trim();
-          if (value) addColor(value);
-        });
-
-        // Strategy 3: Get colors from buttons/links (highly weighted - often brand colors)
-        const buttons = document.querySelectorAll('a, button, .btn, .button');
-        Array.from(buttons).slice(0, 30).forEach(btn => {
-          const computed = window.getComputedStyle(btn);
-          addColor(computed.backgroundColor);
-          addColor(computed.color);
-        });
-
-        // Return colors sorted by frequency (most common = more likely to be brand colors)
-        return Array.from(colorMap.entries())
-          .sort((a, b) => b[1] - a[1]) // Sort by count (descending)
-          .map(([color]) => color);
-      }).catch(() => []);
-
-      console.log(`[LOGO] CSS extraction found ${cssColors.length} colors in ${Date.now() - cssColorStart}ms`);
-
-      // Convert rgb/rgba to hex
-      const rgbToHex = (rgb: string): string | null => {
-        const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-        if (!match) return null;
-        const r = parseInt(match[1]);
-        const g = parseInt(match[2]);
-        const b = parseInt(match[3]);
-        return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
-      };
-
-      const hexColors = cssColors
-        .map(rgbToHex)
-        .filter((c): c is string => c !== null)
-        .filter(c => {
-          // Filter out white/black/gray
-          const r = parseInt(c.slice(1, 3), 16);
-          const g = parseInt(c.slice(3, 5), 16);
-          const b = parseInt(c.slice(5, 7), 16);
-          const brightness = (r + g + b) / 3;
-          if (brightness > 240 || brightness < 20) return false;
-          const max = Math.max(r, g, b);
-          const min = Math.min(r, g, b);
-          const saturation = max === 0 ? 0 : (max - min) / max;
-          return saturation > 0.15;
-        });
-
-      console.log(`[LOGO] After filtering: ${hexColors.length} colorful CSS colors`);
-
-      let primary: string;
-      let secondary: string;
-      let colorPalette: string[];
-
-      // If we found ANY colors in CSS, use them (FAST PATH - no screenshot!)
-      // Even 1 color is better than timing out on screenshot
-      if (hexColors.length >= 1) {
-        console.log(`[LOGO] ✓ Using ${hexColors.length} CSS color(s) (no screenshot needed)`);
-        primary = hexColors[0];
-        secondary = hexColors[1] || hexColors[0]; // Use primary again if only one color found
-        colorPalette = hexColors.slice(0, 6);
-
-        // Pad palette if needed
-        while (colorPalette.length < 2) {
-          colorPalette.push(primary);
-        }
-
-        await browser.close();
-
-        return NextResponse.json({
-          logo: logoUrl,
-          colors: {
-            primary,
-            secondary,
-            palette: colorPalette,
-          },
-        });
       }
-
-      // FALLBACK: Not enough CSS colors found, take screenshot (SLOW PATH)
-      console.log('[LOGO] Not enough CSS colors, falling back to screenshot analysis...');
-      const screenshotStart = Date.now();
-
-      let screenshotBuffer: Buffer;
-
-      // Try to screenshot just the header element (much smaller and faster)
-      const headerElement = await page.$('header, .header, nav, .navbar').catch(() => null);
-
-      if (headerElement) {
-        console.log('[LOGO] Found header element, taking targeted screenshot');
-        screenshotBuffer = await headerElement.screenshot({
-          type: 'jpeg',
-          quality: 40,
-        });
-      } else {
-        console.log('[LOGO] No header found, taking small viewport screenshot');
-        screenshotBuffer = await page.screenshot({
-          type: 'jpeg',
-          quality: 40,
-          fullPage: false,
-          clip: { x: 0, y: 0, width: 600, height: 200 }
-        });
-      }
-
-      console.log(`[LOGO] Screenshot taken in ${Date.now() - screenshotStart}ms, size: ${screenshotBuffer.length} bytes`);
 
       await browser.close();
 
-      // Extract colors using Vibrant
-      console.log('[LOGO] Extracting colors...');
-      const colorStart = Date.now();
+      const totalTime = Date.now() - startTime;
+      console.log(`[SUCCESS] Extraction complete in ${totalTime}ms`);
 
-      const vibrant = new Vibrant(screenshotBuffer);
-      const palette = await vibrant.getPalette();
-
-      console.log(`[LOGO] Colors extracted in ${Date.now() - colorStart}ms`);
-
-      // Get color swatches sorted by population (dominance)
-      // Filter out null/undefined values
-      const allSwatches = Object.values(palette)
-        .filter((swatch) => swatch !== null && swatch !== undefined);
-
-      // Filter out white/black/gray (low-saturation noise)
-      const colorfulSwatches = allSwatches.filter((swatch) => {
-        const rgb = swatch.rgb;
-        const r = rgb[0], g = rgb[1], b = rgb[2];
-
-        // Calculate brightness (0-255)
-        const brightness = (r + g + b) / 3;
-
-        // Filter out too bright (white-ish) or too dark (black-ish)
-        if (brightness > 240 || brightness < 20) {
-          return false;
-        }
-
-        // Calculate saturation to filter out grays
-        const max = Math.max(r, g, b);
-        const min = Math.min(r, g, b);
-        const saturation = max === 0 ? 0 : (max - min) / max;
-
-        // Filter out low saturation (grays) - keep only colorful
-        return saturation > 0.15; // 15% minimum saturation
-      });
-
-      // Sort by population (most dominant first)
-      const sortedSwatches = colorfulSwatches.sort((a, b) =>
-        (b.population || 0) - (a.population || 0)
-      );
-
-      // Extract primary and secondary colors from filtered swatches
-      // Fallback to any swatch if no colorful ones found
-      primary = sortedSwatches[0]?.hex || allSwatches[0]?.hex || '#000000';
-      secondary = sortedSwatches[1]?.hex || allSwatches[1]?.hex || '#FFFFFF';
-
-      // Get full palette (top 6 colors) - prefer colorful, but include all if not enough
-      colorPalette = [
-        ...sortedSwatches.slice(0, 6),
-        ...allSwatches.slice(0, 6)
-      ]
-        .filter((swatch, index, self) =>
-          index === self.findIndex((s) => s.hex === swatch.hex) // Remove duplicates
-        )
-        .slice(0, 6)
-        .map((swatch) => swatch.hex);
-
-      return NextResponse.json({
-        logo: logoUrl,
-        colors: {
-          primary,
-          secondary,
-          palette: colorPalette,
-        },
-      });
+      return NextResponse.json({ logo, colors });
 
     } catch (error) {
       if (browser) {
         await browser.close().catch(() => {});
       }
 
-      console.error('Extraction error:', error);
+      console.error('[ERROR]', error);
 
       return NextResponse.json(
         {
           error: error instanceof Error
-            ? `Failed to extract: ${error.message}`
-            : 'Failed to extract logo and colors'
+            ? `Extraction failed: ${error.message}`
+            : 'Extraction failed'
         },
         { status: 500 }
       );
     }
 
   } catch (error) {
-    console.error('Request error:', error);
-    return NextResponse.json(
-      { error: 'Invalid request' },
-      { status: 400 }
-    );
+    console.error('[ERROR] Request error:', error);
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
 }

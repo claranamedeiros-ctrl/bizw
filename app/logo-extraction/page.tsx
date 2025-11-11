@@ -26,24 +26,25 @@ export default function LogoExtraction() {
     setProgress('Launching browser...');
 
     try {
-      // Simulate progress messages
+      // Progress simulation
       setTimeout(() => setProgress('Navigating to website...'), 1000);
       setTimeout(() => setProgress('Extracting logo...'), 3000);
-      setTimeout(() => setProgress('Analyzing brand colors from CSS...'), 8000);
-      setTimeout(() => setProgress('Filtering and sorting colors...'), 10000);
+      setTimeout(() => setProgress('Analyzing colors from CSS...'), 5000);
 
       const response = await fetch('/api/extract-logo-colors', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        setResult({ logo: null, colors: { primary: '', secondary: '', palette: [] }, error: data.error });
+        setResult({
+          logo: null,
+          colors: { primary: '', secondary: '', palette: [] },
+          error: data.error
+        });
       } else {
         setProgress('Complete!');
         setResult(data);
@@ -58,6 +59,21 @@ export default function LogoExtraction() {
       setLoading(false);
       setTimeout(() => setProgress(''), 1000);
     }
+  };
+
+  // Auto-detect logo background based on primary color brightness
+  const getLogoBgClass = () => {
+    if (!result?.colors.primary) return 'bg-gray-100';
+
+    const hex = result.colors.primary;
+    const rgb = parseInt(hex.slice(1), 16);
+    const r = (rgb >> 16) & 255;
+    const g = (rgb >> 8) & 255;
+    const b = rgb & 255;
+    const brightness = (r + g + b) / 3;
+
+    // If primary is dark, use light background for logo
+    return brightness < 128 ? 'bg-gray-100' : 'bg-slate-900';
   };
 
   return (
@@ -83,6 +99,7 @@ export default function LogoExtraction() {
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="https://example.com"
                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                onKeyDown={(e) => e.key === 'Enter' && handleExtract()}
               />
               <button
                 onClick={handleExtract}
@@ -117,7 +134,7 @@ export default function LogoExtraction() {
               {result.logo && (
                 <div className="bg-gray-50 rounded-lg p-6">
                   <h2 className="text-xl font-semibold text-gray-800 mb-4">Logo</h2>
-                  <div className="flex items-center justify-center bg-white p-8 rounded-lg border-2 border-gray-200 min-h-[150px]">
+                  <div className={`flex items-center justify-center p-8 rounded-lg border-2 border-gray-300 min-h-[150px] ${getLogoBgClass()}`}>
                     <img
                       src={result.logo}
                       alt="Extracted logo"
