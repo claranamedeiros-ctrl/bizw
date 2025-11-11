@@ -105,16 +105,34 @@ export async function POST(request: NextRequest) {
       }
 
       // Take screenshot for color extraction
+      console.log('[LOGO] Taking screenshot for color analysis...');
+      const screenshotStart = Date.now();
+
       const screenshotBuffer = await page.screenshot({
-        type: 'png',
-        fullPage: false, // Just capture viewport
+        type: 'jpeg',  // JPEG is much smaller than PNG
+        quality: 60,   // Lower quality = smaller size, faster
+        fullPage: false,
+        timeout: 15000, // 15 second timeout for screenshot
+        clip: {  // Only capture top portion of page (where logos usually are)
+          x: 0,
+          y: 0,
+          width: 1200,  // Reduced from 1920
+          height: 600   // Reduced from 1080
+        }
       });
+
+      console.log(`[LOGO] Screenshot taken in ${Date.now() - screenshotStart}ms, size: ${screenshotBuffer.length} bytes`);
 
       await browser.close();
 
       // Extract colors using Vibrant
+      console.log('[LOGO] Extracting colors...');
+      const colorStart = Date.now();
+
       const vibrant = new Vibrant(screenshotBuffer);
       const palette = await vibrant.getPalette();
+
+      console.log(`[LOGO] Colors extracted in ${Date.now() - colorStart}ms`);
 
       // Get color swatches sorted by population (dominance)
       // Filter out null/undefined values and sort by population
