@@ -18,7 +18,7 @@ ENV HOSTNAME="0.0.0.0"
 # Copy standalone build
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+# Note: public directory is empty, Next.js standalone handles static files
 
 # Create symlink from where Playwright expects browsers to where they actually are
 # Playwright in standalone looks at: /opt/render/.cache/ms-playwright/chromium_headless_shell-1194/
