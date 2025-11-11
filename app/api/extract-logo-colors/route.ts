@@ -61,6 +61,10 @@ export async function POST(request: NextRequest) {
 
       console.log(`[LOGO] Navigation completed in ${Date.now() - navStart}ms`);
 
+      // Wait a moment for page to settle
+      await page.waitForTimeout(1000);
+      console.log('[LOGO] Page settled');
+
       // Extract logo URL
       let logoUrl: string | null = null;
 
@@ -110,14 +114,13 @@ export async function POST(request: NextRequest) {
 
       const screenshotBuffer = await page.screenshot({
         type: 'jpeg',  // JPEG is much smaller than PNG
-        quality: 60,   // Lower quality = smaller size, faster
+        quality: 40,   // Very low quality is fine for color extraction
         fullPage: false,
-        timeout: 15000, // 15 second timeout for screenshot
-        clip: {  // Only capture top portion of page (where logos usually are)
+        clip: {  // Small area - just need header for logo colors
           x: 0,
           y: 0,
-          width: 1200,  // Reduced from 1920
-          height: 600   // Reduced from 1080
+          width: 600,   // Much smaller - logos are usually small
+          height: 300   // Just the header area
         }
       });
 
