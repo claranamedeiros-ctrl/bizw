@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chromium } from 'playwright';
-import { Vibrant, Swatch } from 'node-vibrant/node';
+import { Vibrant } from 'node-vibrant/node';
 
 export async function POST(request: NextRequest) {
   try {
@@ -99,8 +99,9 @@ export async function POST(request: NextRequest) {
       const palette = await vibrant.getPalette();
 
       // Get color swatches sorted by population (dominance)
+      // Filter out null/undefined values and sort by population
       const swatches = Object.values(palette)
-        .filter((swatch): swatch is Swatch => swatch !== null && swatch !== undefined)
+        .filter((swatch) => swatch !== null && swatch !== undefined)
         .sort((a, b) => (b.population || 0) - (a.population || 0));
 
       // Extract primary and secondary colors
