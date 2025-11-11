@@ -1,27 +1,29 @@
-# Use official Playwright image which includes all browser dependencies
-FROM mcr.microsoft.com/playwright:v1.56.1-noble
-
-# Set working directory
+# Stage 1: Dependencies
+FROM node:20-slim AS deps
 WORKDIR /app
-
-# Copy package files
 COPY package*.json ./
-
-# Install dependencies
 RUN npm ci
 
-# Copy application code
+# Stage 2: Build with all dev dependencies
+FROM node:20-slim AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# Build Next.js app
 RUN npm run build
 
-# Expose port
-EXPOSE 3000
+# Stage 3: Production runtime with Playwright
+FROM mcr.microsoft.com/playwright:v1.56.1-noble AS runner
+WORKDIR /app
 
-# Set environment variable for production
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 
-# Start the application
-CMD ["npm", "start"]
+# Copy standalone build output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
