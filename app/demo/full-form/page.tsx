@@ -36,7 +36,7 @@ export default function FullFormDemo() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('/api/extract/document-real', {
+      const response = await fetch('/api/extract/document', {
         method: 'POST',
         body: formData,
       });
