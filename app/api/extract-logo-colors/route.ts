@@ -114,6 +114,7 @@ export async function POST(request: NextRequest) {
 
               candidates.push({ src: img.src, score, width, height });
             }
+          }
         });
 
         // Sort by score (highest first) and return best match
