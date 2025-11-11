@@ -386,7 +386,7 @@ async function extractColorsFromScreenshot(page: Page): Promise<BrandColors> {
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  const MAX_TIME = 15000; // 15 second hard limit
+  const MAX_TIME = 25000; // 25 second hard limit (Render has 30s timeout)
 
   try {
     const { url } = await request.json();
@@ -434,18 +434,13 @@ export async function POST(request: NextRequest) {
       console.log('[NAV] Navigating to', url);
       await page.goto(url, {
         waitUntil: 'domcontentloaded',
-        timeout: 20000
+        timeout: 25000
       });
 
       await page.waitForTimeout(500); // Let images load
 
       const elapsed = Date.now() - startTime;
       console.log(`[TIME] Navigation complete in ${elapsed}ms`);
-
-      // Check time budget
-      if (elapsed > MAX_TIME - 5000) {
-        throw new Error('Time budget exceeded during navigation');
-      }
 
       // Extract logo
       const logo = await extractLogo(page, url);
@@ -458,7 +453,7 @@ export async function POST(request: NextRequest) {
       console.log(`[TIME] After CSS extraction: ${elapsedAfterCSS}ms`);
 
       // Stage 2: Screenshot fallback (only if needed and time permits)
-      if (!colors && elapsedAfterCSS < MAX_TIME - 3000) {
+      if (!colors && elapsedAfterCSS < MAX_TIME - 5000) {
         colors = await extractColorsFromScreenshot(page);
       } else if (!colors) {
         console.log('[COLOR] Skipping screenshot due to time budget');
