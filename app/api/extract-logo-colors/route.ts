@@ -108,21 +108,30 @@ export async function POST(request: NextRequest) {
         logoUrl = new URL(logoUrl, baseUrl.origin).href;
       }
 
-      // Take screenshot for color extraction
+      // Take screenshot for color extraction - try header element first, fallback to top of viewport
       console.log('[LOGO] Taking screenshot for color analysis...');
       const screenshotStart = Date.now();
 
-      const screenshotBuffer = await page.screenshot({
-        type: 'jpeg',  // JPEG is much smaller than PNG
-        quality: 40,   // Very low quality is fine for color extraction
-        fullPage: false,
-        clip: {  // Small area - just need header for logo colors
-          x: 0,
-          y: 0,
-          width: 600,   // Much smaller - logos are usually small
-          height: 300   // Just the header area
-        }
-      });
+      let screenshotBuffer: Buffer;
+
+      // Try to screenshot just the header element (much smaller and faster)
+      const headerElement = await page.$('header, .header, nav, .navbar').catch(() => null);
+
+      if (headerElement) {
+        console.log('[LOGO] Found header element, taking targeted screenshot');
+        screenshotBuffer = await headerElement.screenshot({
+          type: 'jpeg',
+          quality: 40,
+        });
+      } else {
+        console.log('[LOGO] No header found, taking small viewport screenshot');
+        screenshotBuffer = await page.screenshot({
+          type: 'jpeg',
+          quality: 40,
+          fullPage: false,
+          clip: { x: 0, y: 0, width: 600, height: 200 }
+        });
+      }
 
       console.log(`[LOGO] Screenshot taken in ${Date.now() - screenshotStart}ms, size: ${screenshotBuffer.length} bytes`);
 
