@@ -96,14 +96,20 @@ function scoreColor(hex: string, weight: number, frequency: number): number {
 // LOGO EXTRACTION
 // ============================================================================
 
-async function extractLogo(page: Page, baseUrl: string): Promise<string | null> {
+type ExtractedLogo = {
+  rendered: string | null; // prefer screenshot data URL
+  raw: string | null;      // original img/src/favicon/header screenshot used
+};
+
+async function extractLogo(page: Page, baseUrl: string): Promise<ExtractedLogo> {
   console.log('[LOGO] Extracting logo...');
 
-  const logoUrl = await page.evaluate((domain) => {
+  const logoData = await page.evaluate((domain) => {
     interface LogoCandidate {
       element: HTMLElement | SVGElement;
       url: string | null;
       score: number;
+      id: string;
     }
 
     const candidates: LogoCandidate[] = [];
@@ -140,7 +146,11 @@ async function extractLogo(page: Page, baseUrl: string): Promise<string | null> 
           score += 1;
         }
 
-        candidates.push({ element: img, url: img.src, score });
+        // Assign unique ID for screenshot
+        const candidateId = `logo-${candidates.length}`;
+        img.setAttribute('data-logo-candidate-id', candidateId);
+
+        candidates.push({ element: img, url: img.src, score, id: candidateId });
       }
 
       // Check all SVGs
@@ -159,10 +169,14 @@ async function extractLogo(page: Page, baseUrl: string): Promise<string | null> 
           score += 5;
         }
 
+        // Assign unique ID for screenshot
+        const candidateId = `logo-${candidates.length}`;
+        svg.setAttribute('data-logo-candidate-id', candidateId);
+
         // Try to get href from <image> inside SVG first
         const svgImg = svg.querySelector('image');
         if (svgImg instanceof SVGImageElement && svgImg.href.baseVal) {
-          candidates.push({ element: svg, url: svgImg.href.baseVal, score: score + 2 });
+          candidates.push({ element: svg, url: svgImg.href.baseVal, score: score + 2, id: candidateId });
           continue;
         }
 
@@ -171,7 +185,7 @@ async function extractLogo(page: Page, baseUrl: string): Promise<string | null> 
         const svgString = serializer.serializeToString(svg);
         const dataUrl = 'data:image/svg+xml;base64,' + btoa(svgString);
 
-        candidates.push({ element: svg, url: dataUrl, score });
+        candidates.push({ element: svg, url: dataUrl, score, id: candidateId });
       }
 
       // Check elements with background-image
@@ -187,7 +201,12 @@ async function extractLogo(page: Page, baseUrl: string): Promise<string | null> 
             if (className.includes('logo') || id.includes('logo')) {
               score += 5;
             }
-            candidates.push({ element: el as HTMLElement, url: urlMatch[1], score });
+
+            // Assign unique ID for screenshot
+            const candidateId = `logo-${candidates.length}`;
+            (el as HTMLElement).setAttribute('data-logo-candidate-id', candidateId);
+
+            candidates.push({ element: el as HTMLElement, url: urlMatch[1], score, id: candidateId });
           }
         }
       }
@@ -200,24 +219,54 @@ async function extractLogo(page: Page, baseUrl: string): Promise<string | null> 
 
     // Only return if we have a reasonable candidate (score >= 3)
     if (candidates.length > 0 && candidates[0].score >= 3) {
-      return candidates[0].url;
+      return { url: candidates[0].url, candidateId: candidates[0].id };
     }
 
     return null;
   }, new URL(baseUrl).hostname.split('.')[0]).catch(() => null);
 
-  if (logoUrl) {
-    // Data URLs (from inline SVG) can be used as-is
-    if (logoUrl.startsWith('data:')) {
-      return logoUrl;
+  // If we found a candidate with ID, try to screenshot the element
+  if (logoData && logoData.candidateId) {
+    const rawUrl = logoData.url;
+
+    // Normalize raw URL
+    let normalizedRaw: string | null = rawUrl;
+    if (rawUrl) {
+      // Data URLs (from inline SVG) can be used as-is
+      if (rawUrl.startsWith('data:')) {
+        normalizedRaw = rawUrl;
+      }
+      // Make absolute
+      else if (!rawUrl.startsWith('http')) {
+        const base = new URL(baseUrl);
+        normalizedRaw = new URL(rawUrl, base.origin).href;
+      } else {
+        normalizedRaw = rawUrl;
+      }
     }
 
-    // Make absolute
-    if (!logoUrl.startsWith('http')) {
-      const base = new URL(baseUrl);
-      return new URL(logoUrl, base.origin).href;
+    // Try to screenshot the actual element
+    try {
+      const handle = await page.$(`[data-logo-candidate-id="${logoData.candidateId}"]`);
+      if (handle) {
+        console.log('[LOGO] Screenshotting logo element...');
+        const buffer = await handle.screenshot({ type: 'png' });
+        const logoScreenshot = `data:image/png;base64,${buffer.toString('base64')}`;
+        console.log('[LOGO] Element screenshot successful');
+        return {
+          rendered: logoScreenshot,
+          raw: normalizedRaw
+        };
+      }
+    } catch (error) {
+      console.warn('[LOGO] Element screenshot failed, using raw URL:', error);
     }
-    return logoUrl;
+
+    // Fallback to raw URL if screenshot failed
+    return {
+      rendered: normalizedRaw,
+      raw: normalizedRaw
+    };
   }
 
   // Priority 4: Favicon fallback
@@ -227,11 +276,15 @@ async function extractLogo(page: Page, baseUrl: string): Promise<string | null> 
   ).catch(() => null);
 
   if (favicon) {
+    let faviconUrl = favicon;
     if (!favicon.startsWith('http')) {
       const base = new URL(baseUrl);
-      return new URL(favicon, base.origin).href;
+      faviconUrl = new URL(favicon, base.origin).href;
     }
-    return favicon;
+    return {
+      rendered: faviconUrl,
+      raw: faviconUrl
+    };
   }
 
   // Priority 5: Screenshot header (last resort)
@@ -249,10 +302,17 @@ async function extractLogo(page: Page, baseUrl: string): Promise<string | null> 
       });
     }
 
-    return `data:image/png;base64,${screenshot.toString('base64')}`;
+    const headerScreenshot = `data:image/png;base64,${screenshot.toString('base64')}`;
+    return {
+      rendered: headerScreenshot,
+      raw: headerScreenshot // Both same for header screenshot
+    };
   } catch (error) {
     console.error('[LOGO] Screenshot failed:', error);
-    return null;
+    return {
+      rendered: null,
+      raw: null
+    };
   }
 }
 
@@ -1047,7 +1107,8 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
     console.log(`[TIME] Navigation complete in ${elapsed}ms`);
 
     // Extract logo
-    const logo = await extractLogo(page, url);
+    const logoResult = await extractLogo(page, url);
+    const { rendered: logo, raw: logoRaw } = logoResult;
 
     // Extract colors - Stage 1: CSS signals (fast)
     const signals = await collectDomColorSignals(page);
@@ -1089,7 +1150,8 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
     console.log(`[SUCCESS] Extraction complete in ${totalTime}ms`);
 
     return NextResponse.json({
-      logo,
+      logo,        // main field, used by frontend (rendered screenshot)
+      logoRaw,     // optional debug field for JSON output (original URL)
       colors,
       about: textBlocks.about,
       disclaimer: textBlocks.disclaimer

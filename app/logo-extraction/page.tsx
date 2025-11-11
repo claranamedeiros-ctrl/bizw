@@ -4,13 +4,14 @@ import { useState } from 'react';
 
 interface ExtractionResult {
   logo: string | null;
+  logoRaw?: string | null;   // optional debug field
   colors: {
     primary: string;
     secondary: string;
     palette: string[];
   };
-  about: string | null;      // NEW: Scraped about text
-  disclaimer: string | null; // NEW: Scraped disclaimer text
+  about?: string | null;
+  disclaimer?: string | null;
   error?: string;
 }
 
@@ -189,22 +190,31 @@ export default function LogoExtraction() {
                 )}
               </div>
 
-              {/* About (Scraped) */}
-              {result.about && (
+              {/* Extracted Text */}
+              {(result.about || result.disclaimer !== undefined) && (
                 <div className="bg-gray-50 rounded-lg p-6">
-                  <h2 className="text-xl font-semibold text-gray-800 mb-4">About (Scraped from site)</h2>
-                  <div className="bg-white p-4 rounded-lg border border-gray-300">
-                    <p className="text-gray-700 leading-relaxed">{result.about}</p>
-                  </div>
-                </div>
-              )}
+                  <h2 className="text-xl font-semibold text-gray-800 mb-4">Extracted Text</h2>
 
-              {/* Disclaimer (Scraped) */}
-              {result.disclaimer && (
-                <div className="bg-gray-50 rounded-lg p-6">
-                  <h2 className="text-xl font-semibold text-gray-800 mb-4">Disclaimer (Scraped from site)</h2>
-                  <div className="bg-white p-4 rounded-lg border border-gray-300">
-                    <p className="text-gray-600 text-sm leading-relaxed">{result.disclaimer}</p>
+                  {/* About subsection */}
+                  {result.about && (
+                    <div className="mb-4">
+                      <h3 className="text-sm font-medium text-gray-700 mb-2">About:</h3>
+                      <div className="bg-white p-4 rounded-lg border border-gray-300">
+                        <p className="text-gray-700 leading-relaxed whitespace-pre-wrap line-clamp-6">{result.about}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Disclaimer subsection */}
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-2">Disclaimer:</h3>
+                    <div className="bg-white p-4 rounded-lg border border-gray-300">
+                      {result.disclaimer ? (
+                        <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-wrap">{result.disclaimer}</p>
+                      ) : (
+                        <p className="text-gray-400 text-sm italic">No disclaimer text detected on this site.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
