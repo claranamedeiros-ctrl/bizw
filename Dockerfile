@@ -14,13 +14,17 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-# Tell Playwright to use the pre-installed browsers
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Copy standalone build
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+
+# Create symlink from where Playwright expects browsers to where they actually are
+# Playwright in standalone looks at: /opt/render/.cache/ms-playwright/chromium_headless_shell-1194/
+# Playwright image has them at: /ms-playwright/chromium-1194/
+RUN mkdir -p /opt/render/.cache/ms-playwright && \
+    ln -s /ms-playwright/chromium-1194 /opt/render/.cache/ms-playwright/chromium_headless_shell-1194
 
 EXPOSE 3000
 
