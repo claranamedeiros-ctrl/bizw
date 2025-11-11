@@ -531,7 +531,7 @@ async function extractColorsFromScreenshot(page: Page): Promise<BrandColors> {
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  const MAX_TIME = 25000; // 25 second hard limit (Render has 30s timeout)
+  const MAX_TIME = 28000; // 28 second hard limit (Render has 30s timeout, leave 2s buffer)
 
   try {
     const { url } = await request.json();
@@ -548,93 +548,101 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid URL format' }, { status: 400 });
     }
 
-    let browser: Browser | undefined;
+    // Wrap extraction in a timeout promise to prevent 502 errors
+    const extractionPromise = performExtraction(url, startTime, MAX_TIME);
+    const timeoutPromise = new Promise<NextResponse>((_, reject) => {
+      setTimeout(() => reject(new Error('Extraction timeout')), MAX_TIME);
+    });
 
-    try {
-      console.log('[REQUEST] Starting extraction for:', url);
-
-      // Launch browser
-      console.log('[BROWSER] Launching...');
-      browser = await chromium.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--single-process',
-          '--no-zygote',
-          '--force-color-profile=srgb' // Better color accuracy
-        ]
-      });
-
-      const context = await browser.newContext({
-        viewport: { width: 1920, height: 1080 },
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-      });
-
-      const page = await context.newPage();
-
-      // Navigate with timeout
-      console.log('[NAV] Navigating to', url);
-      await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: 25000
-      });
-
-      await page.waitForTimeout(500); // Let images load
-
-      const elapsed = Date.now() - startTime;
-      console.log(`[TIME] Navigation complete in ${elapsed}ms`);
-
-      // Extract logo
-      const logo = await extractLogo(page, url);
-
-      // Extract colors - Stage 1: CSS signals (fast)
-      const signals = await collectDomColorSignals(page);
-      let colors = deriveBrandColorsFromSignals(signals);
-
-      const elapsedAfterCSS = Date.now() - startTime;
-      console.log(`[TIME] After CSS extraction: ${elapsedAfterCSS}ms`);
-
-      // Stage 2: Screenshot fallback (only if needed and time permits)
-      if (!colors && elapsedAfterCSS < MAX_TIME - 5000) {
-        colors = await extractColorsFromScreenshot(page);
-      } else if (!colors) {
-        console.log('[COLOR] Skipping screenshot due to time budget');
-        colors = {
-          primary: '#000000',
-          secondary: '#FFFFFF',
-          palette: ['#000000', '#FFFFFF']
-        };
-      }
-
-      await browser.close();
-
-      const totalTime = Date.now() - startTime;
-      console.log(`[SUCCESS] Extraction complete in ${totalTime}ms`);
-
-      return NextResponse.json({ logo, colors });
-
-    } catch (error) {
-      if (browser) {
-        await browser.close().catch(() => {});
-      }
-
-      console.error('[ERROR]', error);
-
-      return NextResponse.json(
-        {
-          error: error instanceof Error
-            ? `Extraction failed: ${error.message}`
-            : 'Extraction failed'
-        },
-        { status: 500 }
-      );
-    }
-
+    return await Promise.race([extractionPromise, timeoutPromise]);
   } catch (error) {
     console.error('[ERROR] Request error:', error);
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+  }
+}
+
+async function performExtraction(url: string, startTime: number, MAX_TIME: number): Promise<NextResponse> {
+  let browser: Browser | undefined;
+
+  try {
+    console.log('[REQUEST] Starting extraction for:', url);
+
+    // Launch browser
+    console.log('[BROWSER] Launching...');
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--single-process',
+        '--no-zygote',
+        '--force-color-profile=srgb' // Better color accuracy
+      ]
+    });
+
+    const context = await browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    });
+
+    const page = await context.newPage();
+
+    // Navigate with timeout
+    console.log('[NAV] Navigating to', url);
+    await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout: 20000 // Reduced to 20s to leave more time for extraction
+    });
+
+    await page.waitForTimeout(500); // Let images load
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[TIME] Navigation complete in ${elapsed}ms`);
+
+    // Extract logo
+    const logo = await extractLogo(page, url);
+
+    // Extract colors - Stage 1: CSS signals (fast)
+    const signals = await collectDomColorSignals(page);
+    let colors = deriveBrandColorsFromSignals(signals);
+
+    const elapsedAfterCSS = Date.now() - startTime;
+    console.log(`[TIME] After CSS extraction: ${elapsedAfterCSS}ms`);
+
+    // Stage 2: Screenshot fallback (only if needed and time permits)
+    if (!colors && elapsedAfterCSS < MAX_TIME - 5000) {
+      colors = await extractColorsFromScreenshot(page);
+    } else if (!colors) {
+      console.log('[COLOR] Skipping screenshot due to time budget');
+      colors = {
+        primary: '#000000',
+        secondary: '#FFFFFF',
+        palette: ['#000000', '#FFFFFF']
+      };
+    }
+
+    await browser.close();
+
+    const totalTime = Date.now() - startTime;
+    console.log(`[SUCCESS] Extraction complete in ${totalTime}ms`);
+
+    return NextResponse.json({ logo, colors });
+  } catch (error) {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+
+    console.error('[ERROR]', error);
+
+    return NextResponse.json(
+      {
+        error: error instanceof Error
+          ? `Extraction failed: ${error.message}`
+          : 'Extraction failed'
+      },
+      { status: 500 }
+    );
   }
 }
