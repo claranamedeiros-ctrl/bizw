@@ -1,39 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { chromium } from 'playwright';
 import { Vibrant } from 'node-vibrant/node';
-import { execSync } from 'child_process';
-import { readdirSync, existsSync } from 'fs';
 
 export async function POST(request: NextRequest) {
   try {
-    // DEBUG: Log filesystem state
-    console.log('[DEBUG] HOME:', process.env.HOME);
-    console.log('[DEBUG] USER:', process.env.USER);
-    console.log('[DEBUG] PWD:', process.cwd());
-
-    // Check what's in the expected location
-    const expectedPath = '/opt/render/.cache/ms-playwright';
-    if (existsSync(expectedPath)) {
-      console.log('[DEBUG] Contents of', expectedPath, ':', readdirSync(expectedPath));
-    } else {
-      console.log('[DEBUG]', expectedPath, 'does NOT exist');
-    }
-
-    // Check what's in /ms-playwright (Playwright image location)
-    if (existsSync('/ms-playwright')) {
-      console.log('[DEBUG] Contents of /ms-playwright:', readdirSync('/ms-playwright'));
-    } else {
-      console.log('[DEBUG] /ms-playwright does NOT exist');
-    }
-
-    // Check what Playwright thinks its browser path is
-    try {
-      const browserPath = execSync('npx playwright --version', { encoding: 'utf-8' });
-      console.log('[DEBUG] Playwright version:', browserPath);
-    } catch (e) {
-      console.log('[DEBUG] Could not get Playwright version');
-    }
-
     const { url } = await request.json();
 
     if (!url) {
@@ -55,9 +25,15 @@ export async function POST(request: NextRequest) {
 
     let browser;
     try {
-      // Launch browser
+      // Launch browser with args for better compatibility in Docker/Render
       browser = await chromium.launch({
         headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu'
+        ]
       });
 
       const context = await browser.newContext({
@@ -67,10 +43,11 @@ export async function POST(request: NextRequest) {
 
       const page = await context.newPage();
 
-      // Navigate to the page with timeout
+      // Navigate to the page with more lenient settings
+      // Changed from 'networkidle' to 'domcontentloaded' - faster and more reliable
       await page.goto(url, {
-        waitUntil: 'networkidle',
-        timeout: 30000,
+        waitUntil: 'domcontentloaded',
+        timeout: 60000, // Increased to 60 seconds
       });
 
       // Extract logo URL
