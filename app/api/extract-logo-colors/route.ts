@@ -56,13 +56,13 @@ export async function POST(request: NextRequest) {
 
       await page.goto(url, {
         waitUntil: 'domcontentloaded',
-        timeout: 60000, // Increased to 60 seconds
+        timeout: 20000, // 20 seconds max for navigation
       });
 
       console.log(`[LOGO] Navigation completed in ${Date.now() - navStart}ms`);
 
-      // Wait a moment for page to settle
-      await page.waitForTimeout(1000);
+      // Wait a brief moment for images to load
+      await page.waitForTimeout(500);
       console.log('[LOGO] Page settled');
 
       // Extract logo URL
