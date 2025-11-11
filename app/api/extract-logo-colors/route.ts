@@ -135,17 +135,50 @@ export async function POST(request: NextRequest) {
       console.log(`[LOGO] Colors extracted in ${Date.now() - colorStart}ms`);
 
       // Get color swatches sorted by population (dominance)
-      // Filter out null/undefined values and sort by population
-      const swatches = Object.values(palette)
-        .filter((swatch) => swatch !== null && swatch !== undefined)
-        .sort((a, b) => (b.population || 0) - (a.population || 0));
+      // Filter out null/undefined values
+      const allSwatches = Object.values(palette)
+        .filter((swatch) => swatch !== null && swatch !== undefined);
 
-      // Extract primary and secondary colors
-      const primary = swatches[0]?.hex || '#000000';
-      const secondary = swatches[1]?.hex || '#FFFFFF';
+      // Filter out white/black/gray (low-saturation noise)
+      const colorfulSwatches = allSwatches.filter((swatch) => {
+        const rgb = swatch.rgb;
+        const r = rgb[0], g = rgb[1], b = rgb[2];
 
-      // Get full palette (top 6 colors)
-      const colorPalette = swatches
+        // Calculate brightness (0-255)
+        const brightness = (r + g + b) / 3;
+
+        // Filter out too bright (white-ish) or too dark (black-ish)
+        if (brightness > 240 || brightness < 20) {
+          return false;
+        }
+
+        // Calculate saturation to filter out grays
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const saturation = max === 0 ? 0 : (max - min) / max;
+
+        // Filter out low saturation (grays) - keep only colorful
+        return saturation > 0.15; // 15% minimum saturation
+      });
+
+      // Sort by population (most dominant first)
+      const sortedSwatches = colorfulSwatches.sort((a, b) =>
+        (b.population || 0) - (a.population || 0)
+      );
+
+      // Extract primary and secondary colors from filtered swatches
+      // Fallback to any swatch if no colorful ones found
+      const primary = sortedSwatches[0]?.hex || allSwatches[0]?.hex || '#000000';
+      const secondary = sortedSwatches[1]?.hex || allSwatches[1]?.hex || '#FFFFFF';
+
+      // Get full palette (top 6 colors) - prefer colorful, but include all if not enough
+      const colorPalette = [
+        ...sortedSwatches.slice(0, 6),
+        ...allSwatches.slice(0, 6)
+      ]
+        .filter((swatch, index, self) =>
+          index === self.findIndex((s) => s.hex === swatch.hex) // Remove duplicates
+        )
         .slice(0, 6)
         .map((swatch) => swatch.hex);
 
