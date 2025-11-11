@@ -75,40 +75,51 @@ export async function POST(request: NextRequest) {
         (el) => el.getAttribute('content')
       ).catch(() => null);
 
-      // 2. Look for the ACTUAL logo - prioritize by specificity, then filter by size
+      // 2. Find ALL potential logos and return the URL that looks best
       logoUrl = await page.evaluate(() => {
-        // Priority 1: Images specifically marked as logo
-        const logoByAlt = document.querySelector('img[alt*="logo" i]:not([alt*="menu"]):not([alt*="icon"])');
-        if (logoByAlt instanceof HTMLImageElement && logoByAlt.naturalWidth > 50) {
-          return logoByAlt.src;
-        }
+        const candidates: Array<{src: string, score: number, width: number, height: number}> = [];
 
-        const logoByClass = document.querySelector('img[class*="logo" i]:not([class*="menu"]):not([class*="icon"])');
-        if (logoByClass instanceof HTMLImageElement && logoByClass.naturalWidth > 50) {
-          return logoByClass.src;
-        }
+        // Get all images with "logo" in alt, class, or src
+        const allImages = Array.from(document.querySelectorAll('img'));
 
-        // Priority 2: First meaningful image in header/nav that's NOT too small
-        const headerImages = Array.from(document.querySelectorAll('header img, nav img, .header img, .navbar img'));
-
-        for (const img of headerImages) {
+        allImages.forEach(img => {
           if (img instanceof HTMLImageElement && img.src) {
-            const width = img.naturalWidth;
-            const height = img.naturalHeight;
+            const alt = (img.alt || '').toLowerCase();
+            const className = (img.className || '').toLowerCase();
+            const src = img.src.toLowerCase();
 
-            // Exclude tiny images, icons, and decorative elements
-            // Logo should be at least 80px wide and reasonable aspect ratio
-            if (width >= 80 && width <= 600 && height >= 20 && height <= 300) {
-              // Prefer logos with reasonable aspect ratios (not too tall/thin)
+            // Check if this looks like a logo
+            const isLogo = alt.includes('logo') || className.includes('logo') || src.includes('logo');
+
+            if (isLogo) {
+              const width = img.naturalWidth;
+              const height = img.naturalHeight;
+
+              // Skip if no dimensions loaded yet
+              if (width === 0 || height === 0) return;
+
+              // Calculate score - prefer larger logos with reasonable aspect ratios
+              let score = width * height; // Base score on area
+
+              // Bonus for reasonable aspect ratios (logos are usually horizontal)
               const aspectRatio = width / height;
-              if (aspectRatio >= 1.5 && aspectRatio <= 15) {
-                return img.src;
+              if (aspectRatio >= 2 && aspectRatio <= 15) {
+                score *= 2; // Double score for good aspect ratio
               }
-            }
-          }
-        }
 
-        return null;
+              // Penalty for very small logos
+              if (width < 100 || height < 30) {
+                score *= 0.5;
+              }
+
+              candidates.push({ src: img.src, score, width, height });
+            }
+        });
+
+        // Sort by score (highest first) and return best match
+        candidates.sort((a, b) => b.score - a.score);
+
+        return candidates.length > 0 ? candidates[0].src : null;
       }).catch(() => null);
 
       // Fallback to og:image if no logo found

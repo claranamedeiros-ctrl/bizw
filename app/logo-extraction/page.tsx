@@ -117,11 +117,11 @@ export default function LogoExtraction() {
               {result.logo && (
                 <div className="bg-gray-50 rounded-lg p-6">
                   <h2 className="text-xl font-semibold text-gray-800 mb-4">Logo</h2>
-                  <div className="flex items-center justify-center bg-white p-8 rounded-lg border-2 border-gray-200 min-h-[300px]">
+                  <div className="flex items-center justify-center bg-white p-8 rounded-lg border-2 border-gray-200 min-h-[150px]">
                     <img
                       src={result.logo}
                       alt="Extracted logo"
-                      className="max-w-full max-h-[400px] w-auto h-auto object-contain"
+                      style={{ maxWidth: '500px', maxHeight: '200px', width: 'auto', height: 'auto' }}
                       crossOrigin="anonymous"
                     />
                   </div>
