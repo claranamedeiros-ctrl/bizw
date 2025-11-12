@@ -1134,9 +1134,26 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
     const logoResult = await extractLogo(page, url, startTime, MAX_TIME);
     const { rendered: logo, raw: logoRaw } = logoResult;
 
-    // Extract colors - Stage 1: CSS signals (fast)
-    const signals = await collectDomColorSignals(page);
-    let colors = deriveBrandColorsFromSignals(signals);
+    // Check time budget before color extraction
+    const elapsedBeforeColor = Date.now() - startTime;
+    const remainingBeforeColor = MAX_TIME - elapsedBeforeColor;
+
+    let colors: BrandColors | null = null;
+
+    if (remainingBeforeColor < 8000) {
+      // Skip color extraction if less than 8s remaining (page.evaluate can be slow)
+      console.log(`[COLOR] Skipping CSS extraction - insufficient time (${Math.round(remainingBeforeColor / 1000)}s remaining, need 8s)`);
+      colors = {
+        primary: '#000000',
+        secondary: '#FFFFFF',
+        palette: ['#000000', '#FFFFFF']
+      };
+    } else {
+      // Extract colors - Stage 1: CSS signals
+      console.log(`[COLOR] Extracting colors (${Math.round(remainingBeforeColor / 1000)}s remaining)...`);
+      const signals = await collectDomColorSignals(page);
+      colors = deriveBrandColorsFromSignals(signals);
+    }
 
     const elapsedAfterCSS = Date.now() - startTime;
     console.log(`[TIME] After CSS extraction: ${elapsedAfterCSS}ms`);
