@@ -3,23 +3,27 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
-# Browser automation
+# Browser automation (for rendering & screenshots)
 playwright==1.40.0
 
 # ML models and image processing
-transformers==4.35.2
 torch==2.1.1
+torchvision==0.16.1
 pillow==10.1.0
-scikit-learn==1.3.2
+numpy>=1.26,<2.1
 
-# HTML parsing and text extraction
+# Transformers (needed by groundingdino)
+transformers==4.35.2
+
+# GroundingDINO (official implementation)
+groundingdino-py==0.4.0
+
+# Mistral API for text extraction
+mistralai==0.1.8
+
+# Color extraction (K-Means clustering)
+scikit-learn>=1.5
+
+# HTML parsing and preprocessing
 beautifulsoup4==4.12.2
 lxml==4.9.3
-
-# Async support
-aiohttp==3.9.1
-asyncio==3.4.3
-
-# Optional: For better color extraction
-opencv-python-headless==4.8.1.78
-numpy==1.26.2

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: bizworth-python-extractor
+    env: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: MISTRAL_API_KEY
+        sync: false  # Set manually in Render dashboard
+    # GroundingDINO needs at least 2GB RAM
+    plan: standard-plus  # $21/month, 2GB RAM
+    healthCheckPath: /health

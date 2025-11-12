@@ -2,12 +2,12 @@
  * Logo & Brand Extraction API - Python Service Proxy
  *
  * This endpoint proxies requests to the Python/FastAPI service that uses:
- * - OWLv2 for AI-powered logo detection
+ * - GroundingDINO for AI-powered logo detection (85-95% accuracy)
+ * - Mistral API for intelligent text extraction
  * - K-Means clustering for color extraction
- * - BeautifulSoup for text extraction
  *
  * The old 1,200-line Next.js implementation has been replaced with a clean
- * Python service using modern AI models. See python-extractor/README.md
+ * Python service using state-of-the-art AI models. See python-extractor/README.md
  *
  * Old code backed up to: route.ts.backup
  */

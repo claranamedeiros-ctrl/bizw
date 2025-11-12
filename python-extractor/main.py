@@ -6,6 +6,7 @@ Replaces the 1000+ line Next.js heuristics with AI models.
 import asyncio
 import io
 import base64
+import os
 from typing import Dict, Any, Optional, List
 from PIL import Image
 from fastapi import FastAPI, HTTPException
@@ -13,15 +14,15 @@ from pydantic import BaseModel
 from playwright.async_api import async_playwright, Page, Browser
 import torch
 
-# Import extraction modules (we'll create these)
-from logo_detector import LogoDetector
+# Import extraction modules
+from logo_detector import LogoDetectorSimplified
 from color_extractor import ColorExtractor
 from text_extractor import TextExtractor
 
 app = FastAPI(title="BizWorth Brand Extractor", version="2.0.0")
 
 # Global instances (loaded once at startup)
-logo_detector: Optional[LogoDetector] = None
+logo_detector: Optional[LogoDetectorSimplified] = None
 color_extractor: Optional[ColorExtractor] = None
 text_extractor: Optional[TextExtractor] = None
 browser: Optional[Browser] = None
@@ -47,10 +48,16 @@ async def startup_event():
 
     print("[STARTUP] Initializing models...")
 
+    # Get Mistral API key from environment
+    mistral_api_key = os.getenv("MISTRAL_API_KEY")
+    if not mistral_api_key:
+        print("[WARNING] MISTRAL_API_KEY not set. Text extraction will use fallback heuristics.")
+        mistral_api_key = ""  # Will use fallback in TextExtractor
+
     # Initialize AI models
-    logo_detector = LogoDetector()
+    logo_detector = LogoDetectorSimplified()  # Auto-downloads GroundingDINO from HuggingFace
     color_extractor = ColorExtractor()
-    text_extractor = TextExtractor()
+    text_extractor = TextExtractor(mistral_api_key=mistral_api_key)
 
     # Initialize Playwright browser
     playwright = await async_playwright().start()
@@ -151,15 +158,15 @@ async def extract_brand_data(request: ExtractionRequest):
 
 async def extract_logo(page: Page, screenshot_bytes: bytes, base_url: str) -> Dict[str, Optional[str]]:
     """
-    Use OWLv2 to detect the logo in the screenshot.
+    Use GroundingDINO to detect the logo in the screenshot.
     Returns: {"logo": data_url_of_cropped_logo, "logoRaw": original_url_if_found}
     """
-    print("[LOGO] Detecting logo with OWLv2...")
+    print("[LOGO] Detecting logo with GroundingDINO...")
 
     try:
         screenshot_image = Image.open(io.BytesIO(screenshot_bytes))
 
-        # Use OWLv2 to detect "company logo" or "brand logo"
+        # Use GroundingDINO to detect "company logo" or "brand logo"
         logo_bbox, confidence = await logo_detector.detect_logo(screenshot_image)
 
         if logo_bbox and confidence > 0.15:  # Confidence threshold

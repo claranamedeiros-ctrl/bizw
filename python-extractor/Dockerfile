@@ -3,7 +3,7 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for Playwright
+# Install system dependencies for Playwright and ML models
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 \
     libgbm1 \
     libasound2 \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
@@ -32,6 +33,9 @@ COPY . .
 
 # Expose port
 EXPOSE 8000
+
+# Environment variables (set these in your deployment platform):
+# - MISTRAL_API_KEY: Required for AI-powered text extraction
 
 # Run the application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
