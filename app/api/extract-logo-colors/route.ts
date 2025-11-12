@@ -1140,9 +1140,10 @@ async function performExtraction(url: string, startTime: number, MAX_TIME: numbe
 
     let colors: BrandColors | null = null;
 
-    if (remainingBeforeColor < 8000) {
-      // Skip color extraction if less than 8s remaining (page.evaluate can be slow)
-      console.log(`[COLOR] Skipping CSS extraction - insufficient time (${Math.round(remainingBeforeColor / 1000)}s remaining, need 8s)`);
+    // Skip color extraction if less than 15s remaining
+    // (Color page.evaluate can take 20+ seconds on complex sites like Rootstrap)
+    if (remainingBeforeColor < 15000) {
+      console.log(`[COLOR] Skipping CSS extraction - insufficient time (${Math.round(remainingBeforeColor / 1000)}s remaining, need 15s)`);
       colors = {
         primary: '#000000',
         secondary: '#FFFFFF',
