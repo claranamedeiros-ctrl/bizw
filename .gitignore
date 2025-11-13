@@ -28,10 +28,6 @@ Thumbs.db
 # Test data and documentation
 sample-data/
 *.md
-!README.md
-!TECHNICAL_PROPOSAL_V2.md
-!LOGO_COLOR_EXTRACTION_PROPOSAL.md
-!DEPLOYMENT_ARCHITECTURE_2025.md
 
 # IDE
 .vscode/
